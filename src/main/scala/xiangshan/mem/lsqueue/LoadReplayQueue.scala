@@ -34,9 +34,9 @@ object LoadReplayCauses {
   val C_DM  = 3
   // dcache bank conflict check
   val C_BC  = 4
-  // RAW queue accept check
+  // RAW queue accept check,have st-ld violation
   val C_RAW = 5
-  // st-ld violation
+  // RAW queue is full
   val C_NK  = 6
   // total causes
   val allCauses = 7
@@ -54,8 +54,8 @@ class ReplayInfo(implicit p: Parameters) extends XSBundle{
   def dcache_rep: Bool = replayCause(LoadReplayCauses.C_DR)
   def dcache_miss: Bool = replayCause(LoadReplayCauses.C_DM)
   def bank_conflict: Bool = replayCause(LoadReplayCauses.C_BC)
-  def raw_nack: Bool = replayCause(LoadReplayCauses.C_RAW)
-  def nuke: Bool = replayCause(LoadReplayCauses.C_NK)
+  def raw_nack: Bool = replayCause(LoadReplayCauses.C_NK)
+  def raw_violation: Bool = replayCause(LoadReplayCauses.C_RAW)
   def need_rep: Bool= replayCause.asUInt.orR
   def canFastReplay: Bool = replayCause(LoadReplayCauses.C_BC)
 }
@@ -386,11 +386,16 @@ class LoadReplayQueue(enablePerf: Boolean)(implicit p: Parameters) extends XSMod
           penaltyReg(i)  := penaltyReg(i) + 1.U
           blockingReg(i) := true.B
         }
-        // case read after read
+        // case rawQueue is full
         when(io.enq(j).bits.replay.raw_nack) {
           blockingReg(i) := Mux(io.rawIsFull,true.B,false.B)
         }
-
+        // case have st-ld violation
+        when(io.enq(j).bits.replay.raw_violation) {
+          counterReg(i) := 1.U << penaltyReg(i)
+          penaltyReg(i) := penaltyReg(i) + 1.U
+          blockingReg(i) := true.B
+        }
         // case MMIO
         when(io.enq(j).bits.isMMIO){
           blockingReg(i) := true.B
@@ -429,8 +434,13 @@ class LoadReplayQueue(enablePerf: Boolean)(implicit p: Parameters) extends XSMod
     }
     // case read after write
     when(causeReg(i)(LoadReplayCauses.C_RAW)) {
+      blockingReg(i) := !(counterReg(i) === 0.U)
+    }
+
+    when(causeReg(i)(LoadReplayCauses.C_NK)) {
       blockingReg(i) := Mux(!io.rawIsFull || (io.loadDeqPtr === entryReg(i).uop.lqIdx), false.B, true.B)
     }
+
   })
 
 
