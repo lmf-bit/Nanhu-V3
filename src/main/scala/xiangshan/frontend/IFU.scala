@@ -295,8 +295,8 @@ class NewIFU(implicit p: Parameters) extends XSModule
 
   XSError(f1_pc.zip(f1_pc_diff).map{ case (a,b) => a.asUInt =/= b.asUInt }.reduce(_||_), "f1_half_snpc adder cut fail")
   XSError(f1_half_snpc.zip(f1_half_snpc_diff).map{ case (a,b) => a.asUInt =/= b.asUInt }.reduce(_||_),  "f1_half_snpc adder cut fail")
-  val f1_cut_ptr            = if(HasCExtension)  VecInit((0 until PredictWidth + 1).map(i =>  Cat(0.U(1.W), f1_ftq_req.startAddr(blockOffBits-1, 1)) + i.U ))
-                                  else           VecInit((0 until PredictWidth).map(i =>     Cat(0.U(1.W), f1_ftq_req.startAddr(blockOffBits-1, 2)) + i.U ))
+  val f1_cut_ptr            = if(HasCExtension)  VecInit((0 until PredictWidth + 1).map(i =>  Cat(0.U(1.W),f1_ftq_req.startAddr(blockOffBits-1) && !f1_doubleLine, f1_ftq_req.startAddr(blockOffBits-2, 1)) + i.U ))
+                                  else           VecInit((0 until PredictWidth).map(i =>     Cat(0.U(1.W), f1_ftq_req.startAddr(blockOffBits-1) && !f1_doubleLine, f1_ftq_req.startAddr(blockOffBits-2, 2)) + i.U ))
 
   // create DASICS tags at IFU stage 1
   io.fdi.startAddr := f1_ftq_req.startAddr
@@ -347,11 +347,7 @@ class NewIFU(implicit p: Parameters) extends XSModule
   .elsewhen(f1_fire && !f1_flush) {f2_valid := true.B }
   .elsewhen(f2_fire)              {f2_valid := false.B}
 
-  // val f2_cache_response_data = ResultHoldBypass(valid = f2_icache_all_resp_wire, data = VecInit(fromICache.map(_.bits.readData)))
-  val f2_cache_response_reg_data  = VecInit(fromICache.map(_.bits.registerData))
-  val f2_cache_response_sram_data = VecInit(fromICache.map(_.bits.sramData))
-  val f2_cache_response_select    = VecInit(fromICache.map(_.bits.select))
-
+  val f2_cache_response_data    = VecInit(fromICache.map(_.bits.data))
 
   val f2_except_pf    = VecInit((0 until PortNumber).map(i => fromICache(i).bits.tlbExcp.pageFault))
   val f2_except_af    = VecInit((0 until PortNumber).map(i => fromICache(i).bits.tlbExcp.accessFault))
@@ -389,9 +385,8 @@ class NewIFU(implicit p: Parameters) extends XSModule
   def cut(cacheline: UInt, cutPtr: Vec[UInt]) : Vec[UInt] ={
     require(HasCExtension)
     // if(HasCExtension){
-      val partCacheline = cacheline((blockBytes * 8 * 2 * 3) / 4 - 1, 0)
       val result   = Wire(Vec(PredictWidth + 1, UInt(16.W)))
-      val dataVec  = cacheline.asTypeOf(Vec(blockBytes * 3 /4, UInt(16.W))) //47 16-bit data vector
+      val dataVec  = cacheline.asTypeOf(Vec(blockBytes/2, UInt(16.W))) //32 16-bit data vector
       (0 until PredictWidth + 1).foreach( i =>
         result(i) := dataVec(cutPtr(i)) //the max ptr is 3*blockBytes/4-1
       )
@@ -406,16 +401,7 @@ class NewIFU(implicit p: Parameters) extends XSModule
     // }
   }
 
-  val f2_data_2_cacheline =  Wire(Vec(4, UInt((2 * blockBits).W)))
-  f2_data_2_cacheline(0) := Cat(f2_cache_response_reg_data(1) , f2_cache_response_reg_data(0))
-  f2_data_2_cacheline(1) := Cat(f2_cache_response_reg_data(1) , f2_cache_response_sram_data(0))
-  f2_data_2_cacheline(2) := Cat(f2_cache_response_sram_data(1) , f2_cache_response_reg_data(0))
-  f2_data_2_cacheline(3) := Cat(f2_cache_response_sram_data(1) , f2_cache_response_sram_data(0))
-
-  val f2_predecod_ptr = Wire(UInt(2.W))
-  f2_predecod_ptr := Cat(f2_cache_response_select(1),f2_cache_response_select(0))
-
-  val f2_data = Mux1H(UIntToOH(f2_predecod_ptr), f2_data_2_cacheline)
+  val f2_data = Cat(f2_cache_response_data.reverse)
   val f2_cut_data   = cut(f2_data, f2_cut_ptr)
 
   /** predecode (include RVC expander) */
@@ -424,10 +410,10 @@ class NewIFU(implicit p: Parameters) extends XSModule
   // preDecoderRegInIn.csrTriggerEnable := io.csrTriggerEnable
   // preDecoderRegIn.pc  := f2_pc
 
-  val preDecoderOut = preDecoder.io.out  
+  val preDecoderOut = preDecoder.io.out
 
   preDecoder.io.in.data := f2_cut_data
-  preDecoder.io.in.frontendTrigger := io.frontendTrigger  
+  preDecoder.io.in.frontendTrigger := io.frontendTrigger
   preDecoder.io.in.pc  := f2_pc
 
   //val f2_expd_instr     = preDecoderOut.expInstr

@@ -61,7 +61,7 @@ case class ICacheParameters(
 trait HasICacheParameters extends HasL1CacheParameters with HasInstrMMIOConst with HasIFUConst{
   val cacheParams = icacheParameters
   val dataCodeUnit = 16
-  val dataCodeUnitNum  = blockBits/dataCodeUnit
+  val dataCodeUnitNum  = blockBits/2/dataCodeUnit
 
   def highestIdxBit = log2Ceil(nSets) - 1
   def encDataUnitBits   = cacheParams.dataCode.width(dataCodeUnit)
@@ -88,7 +88,7 @@ trait HasICacheParameters extends HasL1CacheParameters with HasInstrMMIOConst wi
   def PortNumber = 2
   def ProbeKey   = 3
 
-  def partWayNum = 2
+  def partWayNum = 4
   def pWay = nWays/partWayNum
 
   def nPrefetchEntries = cacheParams.nPrefetchEntries
@@ -337,6 +337,10 @@ class ICacheDataArray(implicit p: Parameters) extends ICacheArray
     })
   }
 
+  // Split a cache block (512bits) to 2 bank (2*256bits)
+  private def bank = 2
+  private def halfBlockBits = blockBits / bank
+
   val io=IO{new Bundle{
     val write    = Flipped(DecoupledIO(new ICacheDataWriteBundle))
     val read     = Flipped(DecoupledIO(Vec(partWayNum, new ICacheReadBundle)))
@@ -344,122 +348,78 @@ class ICacheDataArray(implicit p: Parameters) extends ICacheArray
     val cacheOp  = Flipped(new L1CacheInnerOpIO) // customized cache op port
     val cache_req_dup = Vec(4, Flipped(Valid(new CacheCtrlReqInfo)))
   }}
-
-  val write_data_bits = Wire(UInt(blockBits.W))
-
-  val port_0_read_0_reg = RegEnable(io.read.valid && io.read.bits.head.port_0_read_0,io.read.fire)
-  val port_0_read_1_reg = RegEnable(io.read.valid && io.read.bits.head.port_0_read_1,io.read.fire)
-  val port_1_read_1_reg = RegEnable(io.read.valid && io.read.bits.head.port_1_read_1,io.read.fire)
-  val port_1_read_0_reg = RegEnable(io.read.valid && io.read.bits.head.port_1_read_0,io.read.fire)
-
-  //val bank_0_idx_vec = io.read.bits.map(copy =>  Mux(io.read.bits.dup_valids && copy.port_0_read_0, copy.vSetIdx(0), copy.vSetIdx(1)))
-  //val bank_1_idx_vec = io.read.bits.map(copy =>  Mux(io.read.valid && copy.port_0_read_1, copy.vSetIdx(0), copy.vSetIdx(1)))
-
-  val bank_0_idx_vec = (0 until partWayNum).map(i => Mux(io.read.bits(i).readValid && io.read.bits(i).port_0_read_0, io.read.bits(i).vSetIdx(0), io.read.bits(i).vSetIdx(1)))
-  val bank_1_idx_vec = (0 until partWayNum).map(i => Mux(io.read.bits(i).readValid && io.read.bits(i).port_0_read_1, io.read.bits(i).vSetIdx(0), io.read.bits(i).vSetIdx(1)))
+  io.cacheOp := DontCare
+  io.cache_req_dup := DontCare
 
 
-  val dataArrays = (0 until partWayNum).map{ i =>
-    val dataArray = Module(new ICachePartWayArray(
-      UInt(blockBits.W),
-      pWay
-    ))
+  val write_data_bits = io.write.bits.data.asTypeOf(Vec(2, UInt(halfBlockBits.W)))
 
-    dataArray.io.read.req(0).valid :=  io.read.bits(i).read_bank_0 && io.read.bits(i).readValid
-    dataArray.io.read.req(0).bits.ridx := bank_0_idx_vec(i)(highestIdxBit,1)
-    dataArray.io.read.req(1).valid := io.read.bits(i).read_bank_1 && io.read.bits(i).readValid
-    dataArray.io.read.req(1).bits.ridx := bank_1_idx_vec(i)(highestIdxBit,1)
+  val dataArrays = (0 until partWayNum).map { w =>
+    (0 until bank).map { b =>
+      val sramBank = Module(new SRAMTemplate(
+        UInt(halfBlockBits.W),
+        set = nSets,
+        way = pWay,
+        shouldReset = true,
+        holdRead = true,
+        singlePort = true,
+        hasMbist = coreParams.hasMbist
+      ))
+      val mbistPipeline = MbistPipeline.PlaceMbistPipeline(1, place = coreParams.hasMbist)
 
-    dataArray
-  }
+      /** SRAM read logic
+       *  Cacheblock is split into 2 bank (lsb and hsb)
+       *  For only one line read, data read from lsb bank at idx and msb bank at idx
+       *  For double line read, data read from lsb bank at idx+1 and msb bank at idx
+       */
+      sramBank.io.r.req.valid := io.read.valid
+      if (b == 0) { // lsb bank
+        val setIdx = Mux(io.read.bits(bank).isDoubleLine, io.read.bits(bank).vSetIdx(1), io.read.bits(bank).vSetIdx(0))
+        sramBank.io.r.req.bits.apply(setIdx = setIdx)
+      } else { // msb bank
+        sramBank.io.r.req.bits.apply(setIdx = io.read.bits(bank).vSetIdx(0))
+      }
 
-  val data_sram_write = Wire(Vec(partWayNum,dataArrays.head.io.write.cloneType))
+      /** SRAM write logic
+       *  Write delay one cycle for timing
+       * */
+      val writeValid = RegNext(io.write.bits.writeEn(w), init = false.B)
+      val writeData = RegEnable(write_data_bits, io.write.bits.writeEn(w))
+      val writeIdx = RegEnable(io.write.bits.virIdx, io.write.bits.writeEn(w))
+      val writeMask = RegEnable(io.write.bits.waymask.asTypeOf(Vec(partWayNum, Vec(pWay, Bool())))(w), io.write.bits.writeEn(w))
 
-  (0 until partWayNum).map{ i =>
-    data_sram_write(i).valid         := io.write.bits.writeEn(i)
-    data_sram_write(i).bits.wdata    := write_data_bits
-    data_sram_write(i).bits.widx     := io.write.bits.virIdx(highestIdxBit,1)
-    data_sram_write(i).bits.wbankidx := io.write.bits.bankIdx
-    data_sram_write(i).bits.wmask    := io.write.bits.waymask.asTypeOf(Vec(partWayNum, Vec(pWay, Bool())))(i)
+      sramBank.io.w.req.valid := writeValid && writeMask.asUInt.orR
+      sramBank.io.w.req.bits.apply(
+        data = writeData(b),
+        setIdx = writeIdx,
+        waymask = writeMask.asUInt
+      )
 
-    dataArrays(i).io.write.valid := RegNext(data_sram_write(i).valid, init = false.B)
-    dataArrays(i).io.write.bits  := RegEnable(data_sram_write(i).bits,data_sram_write(i).valid)
-  }
-
-
-  val read_datas = Wire(Vec(2,Vec(nWays,UInt(blockBits.W) )))
-
-  (0 until PortNumber).map { port =>
-    (0 until nWays).map { w =>
-      read_datas(port)(w) := dataArrays(w / pWay).io.read.resp.rdata(port).asTypeOf(Vec(pWay, UInt(blockBits.W)))(w % pWay)
+      sramBank
     }
   }
 
-  io.readResp.datas(0) := Mux( port_0_read_1_reg, read_datas(1) , read_datas(0))
-  io.readResp.datas(1) := Mux( port_1_read_0_reg, read_datas(0) , read_datas(1))
+  /** Read logic
+   */
+  val isDoubleLineReg = RegEnable(io.read.bits.last.isDoubleLine, io.read.fire)
+  val read_datas = Wire(Vec(2,Vec(nWays,UInt(blockBits.W))))
 
-  val write_bank_0 = WireInit(io.write.valid && !io.write.bits.bankIdx)
-  val write_bank_1 = WireInit(io.write.valid &&  io.write.bits.bankIdx)
-  
+  for(w <- 0 until nWays) {
+    read_datas(0)(w) := Mux(isDoubleLineReg,
+      dataArrays(w / pWay)(1).io.r.resp.asTypeOf(Vec(pWay, UInt(halfBlockBits.W)))(w % pWay),
+      dataArrays(w / pWay)(0).io.r.resp.asTypeOf(Vec(pWay, UInt(halfBlockBits.W)))(w % pWay))
+    read_datas(1)(w) := Mux(isDoubleLineReg,
+      dataArrays(w / pWay)(0).io.r.resp.asTypeOf(Vec(pWay, UInt(halfBlockBits.W)))(w % pWay),
+      dataArrays(w / pWay)(1).io.r.resp.asTypeOf(Vec(pWay, UInt(halfBlockBits.W)))(w % pWay))
+  }
 
-  val bank_0_idx = bank_0_idx_vec.last
-  val bank_1_idx = bank_1_idx_vec.last
-
-  
-  io.read.ready := !io.write.valid &&
-                    dataArrays.map(_.io.read.req.map(_.ready).reduce(_&&_)).reduce(_&&_)
-
-  //Parity Encode
-  val write = io.write.bits
-  val write_data = WireInit(write.data)
-  write_data_bits := write_data
-
-  io.readResp.codes(0) := 0.U.asTypeOf(io.readResp.codes(0).cloneType)//Mux( port_0_read_1_reg, read_codes(1) , read_codes(0))
-  io.readResp.codes(1) := 0.U.asTypeOf(io.readResp.codes(0).cloneType)//Mux( port_1_read_0_reg, read_codes(0) , read_codes(1))
-
+  /** IO
+   */
+  io.readResp.datas := read_datas
+  io.readResp.codes := 0.U.asTypeOf(io.readResp.codes.cloneType)
   io.write.ready := true.B
-
-  // deal with customized cache op
-  require(nWays <= 32)
-  io.cacheOp.resp.bits := DontCare
-  io.cacheOp.resp.valid := false.B
-  val cacheOpShouldResp = WireInit(false.B) 
-  val dataresp = Wire(Vec(nWays,UInt(blockBits.W) ))
-  dataresp := DontCare
-
-  val data_resp_way = RegEnable(dataresp(RegNext(io.cacheOp.req.bits.wayNum(4, 0))),RegNext(cacheOpShouldResp, init = false.B))
-
-  for (w <- 0 until partWayNum) {
-    when(io.cache_req_dup(w).valid){
-      when(
-        CacheInstrucion.isReadData(io.cache_req_dup(w).bits.opCode)
-      ){
-        dataArrays(w).io.read.req.zipWithIndex.map{ case(port,i) =>
-          if(i ==0) port.valid     := !io.cache_req_dup(w).bits.bank_num(0)
-          else      port.valid     :=  io.cache_req_dup(w).bits.bank_num(0)
-          port.bits.ridx := io.cache_req_dup(w).bits.index(highestIdxBit,1)
-        }
-        cacheOpShouldResp := dataArrays.head.io.read.req.map(_.fire).reduce(_||_)
-        dataresp :=Mux(io.cache_req_dup(w).bits.bank_num(0).asBool,  read_datas(1),  read_datas(0))
-      }
-      when(CacheInstrucion.isWriteData(io.cache_req_dup(w).bits.opCode)){
-        data_sram_write(w).valid         := true.B
-        data_sram_write(w).bits.wdata    := io.cache_req_dup(w).bits.write_data_vec.asTypeOf(write_data.cloneType)
-        data_sram_write(w).bits.wbankidx := io.cache_req_dup(w).bits.bank_num(0)
-        data_sram_write(w).bits.widx     := io.cache_req_dup(w).bits.index(highestIdxBit,1)
-        data_sram_write(w).bits.wmask    := UIntToOH(io.cache_req_dup(w).bits.wayNum(4, 0)).asTypeOf(Vec(partWayNum, Vec(pWay, Bool())))(w)
-        cacheOpShouldResp := true.B
-      }
-    }
-  }
-  
-  io.cacheOp.resp.valid := RegNext(RegNext(cacheOpShouldResp, init = false.B), init = false.B)
-  val numICacheLineWords = blockBits / 64
-  require(blockBits >= 64 && isPow2(blockBits))
-  for (wordIndex <- 0 until numICacheLineWords) {
-    io.cacheOp.resp.bits.read_data_vec(wordIndex) := data_resp_way(64*(wordIndex+1)-1, 64*wordIndex)
-  }
-
+  io.read.ready := !io.write.valid &&
+    dataArrays.map(_.map(_.io.r.req.ready).reduce(_ && _)).reduce(_ && _)
 }
 
 
@@ -707,5 +667,4 @@ class ICachePartWayArray[T <: Data](gen: T, pWay: Int)(implicit p: Parameters) e
   io.read.req.map(_.ready := !io.write.valid && srams.map(_.io.r.req.ready).reduce(_&&_))
 
   io.read.resp.rdata := VecInit(srams.map(bank => bank.io.r.resp.asTypeOf(Vec(pWay,gen))))
-
 }

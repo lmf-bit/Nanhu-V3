@@ -37,9 +37,7 @@ class ICacheMainPipeReq(implicit p: Parameters) extends ICacheBundle
 class ICacheMainPipeResp(implicit p: Parameters) extends ICacheBundle
 {
   val vaddr    = UInt(VAddrBits.W)
-  val registerData = UInt(blockBits.W)
-  val sramData = UInt(blockBits.W)
-  val select   = Bool()
+  val data     = UInt((blockBits/2).W)
   val paddr    = UInt(PAddrBits.W)
   val tlbExcp  = new Bundle{
     val pageFault = Bool()
@@ -821,29 +819,36 @@ class ICacheMainPipe(implicit p: Parameters) extends ICacheModule with HasPerfLo
   }
 
   //** use hit one-hot select data
-  val s2_hit_datas    = VecInit(s2_data_cacheline.zipWithIndex.map { case(bank, i) =>
-    val port_hit_data = Mux1H(s2_tag_match_vec(i).asUInt, bank)
-    port_hit_data
-  })
+//  val s2_hit_datas    = VecInit(s2_data_cacheline.zipWithIndex.map { case(bank, i) =>
+//    val port_hit_data = Mux1H(s2_tag_match_vec(i).asUInt, bank)
+//    port_hit_data
+//  })
 
+  val s2_hit_datas = Wire(Vec(2, UInt((blockBits / 2).W)))
+  s2_hit_datas(0) := Mux1H(s2_tag_match_vec(0).asUInt, s2_data_cacheline(0))
+  s2_hit_datas(1) := Mux1H(Mux(s2_double_line, s2_tag_match_vec(1).asUInt, s2_tag_match_vec(0).asUInt), s2_data_cacheline(1))
   val s2_register_datas       = Wire(Vec(2, UInt(blockBits.W)))
 
-  s2_register_datas.zipWithIndex.map{case(bank,i) =>
-    // if(i == 0) bank := Mux(s2_port_hit(i), s2_hit_datas(i), Mux(miss_0_s2_0_latch,reservedRefillData(0), Mux(miss_1_s2_0_latch,reservedRefillData(1), missSlot(0).m_data)))
-    // else    bank    := Mux(s2_port_hit(i), s2_hit_datas(i), Mux(miss_0_s2_1_latch,reservedRefillData(0), Mux(miss_1_s2_1_latch,reservedRefillData(1), missSlot(1).m_data)))
+  s2_register_datas.zipWithIndex.foreach{ case(bank,i) =>
     if(i == 0) bank := Mux(miss_0_s2_0_latch,reservedRefillData(0), Mux(miss_1_s2_0_latch,reservedRefillData(1), missSlot(0).m_data))
     else    bank    := Mux(miss_0_s2_1_latch,reservedRefillData(0), Mux(miss_1_s2_1_latch,reservedRefillData(1), missSlot(1).m_data))
   }
 
   /** response to IFU */
 
+  // split register data
+  val s2_slot_datas = Wire(Vec(2, UInt((blockBits/2).W)))
+  s2_slot_datas(0) := Mux(s2_double_line, s2_register_datas(0)(511,256), s2_register_datas(0)(255,0))
+  s2_slot_datas(1) := Mux(s2_double_line, s2_register_datas(1)(255,0), s2_register_datas(0)(511,256))
+
+  val s2_fetch_data = Wire(Vec(2, UInt((blockBits / 2).W)))
+  s2_fetch_data(0) := Mux(s2_port_hit(0), s2_hit_datas(0), s2_slot_datas(0))
+  s2_fetch_data(1) := Mux(s2_port_hit(1) || (s2_port_hit(0) && !s2_double_line), s2_hit_datas(1), s2_slot_datas(1))
+
   (0 until PortNumber).map{ i =>
     if(i ==0) toIFU(i).valid          := s2_fire && !s2_flush_latch
        else   toIFU(i).valid          := s2_fire && !s2_flush_latch && s2_double_line
-    //when select is high, use sramData. Otherwise, use registerData.
-    toIFU(i).bits.registerData  := s2_register_datas(i)
-    toIFU(i).bits.sramData  := s2_hit_datas(i)
-    toIFU(i).bits.select    := s2_port_hit(i)
+    toIFU(i).bits.data      := s2_fetch_data(i)
     toIFU(i).bits.paddr     := s2_req_paddr(i)
     toIFU(i).bits.vaddr     := s2_req_vaddr(i)
     toIFU(i).bits.tlbExcp.pageFault     := s2_except_pf(i)
