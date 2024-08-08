@@ -126,8 +126,8 @@ class StoreUnit(implicit p: Parameters) extends XSModule with HasPerfLogging {
 //  io.feedbackSlow := Pipe(s1_rsFeedback)
 
   io.feedbackSlow.valid := RegNext(s1_in.valid,false.B)
-  io.feedbackSlow.bits.rsIdx := RegNext(s1_rsFeedback.bits.rsIdx)
-  io.feedbackSlow.bits.sourceType := RegNext(Mux(s1_rsFeedback.valid,s1_rsFeedback.bits.sourceType,RSFeedbackType.success))
+  io.feedbackSlow.bits.rsIdx := RegEnable(s1_rsFeedback.bits.rsIdx, s1_in.valid)
+  io.feedbackSlow.bits.sourceType := RegEnable(Mux(s1_rsFeedback.valid,s1_rsFeedback.bits.sourceType,RSFeedbackType.success), s1_in.valid)
 
   XSDebug(s1_rsFeedback.valid,
     "S1 Store: tlbHit: %d rsBank: %d rsIdx: %d\n",
