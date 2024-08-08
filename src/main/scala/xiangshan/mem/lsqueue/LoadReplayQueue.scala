@@ -635,7 +635,7 @@ class LoadReplayQueue(enablePerf: Boolean)(implicit p: Parameters) extends XSMod
   for (i <- 0 until LoadPipelineWidth) {
     val fastRepBlock = io.fastReplayStop(i)
     s1_SelReplayIdx(i) := OHToUInt(s1_robOldestSelOH(i))
-    s2_robOldestSelOH(i) := RegNext(s1_robOldestSelOH(i))
+    s2_robOldestSelOH(i) := RegEnable(s1_robOldestSelOH(i), s1_selResSeq(i).valid)
     dontTouch(s1_SelReplayIdx)
     addrModule.io.ren(i) := s1_selResSeq(i).valid && !fastRepBlock
     addrModule.io.raddr(i) := s1_SelReplayIdx(i)

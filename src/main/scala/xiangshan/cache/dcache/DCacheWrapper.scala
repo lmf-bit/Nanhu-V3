@@ -704,7 +704,7 @@ class DCacheImp(outer: DCache) extends LazyModuleImp(outer) with HasDCacheParame
   // atomics
   // atomics not finished yet
   io.lsu.atomics <> atomicsReplayUnit.io.lsu
-  atomicsReplayUnit.io.pipe_resp := RegNext(mainPipe.io.atomic_resp)
+  atomicsReplayUnit.io.pipe_resp := Pipe(mainPipe.io.atomic_resp)
   atomicsReplayUnit.io.block_lr <> mainPipe.io.block_lr
 
   //----------------------------------------
