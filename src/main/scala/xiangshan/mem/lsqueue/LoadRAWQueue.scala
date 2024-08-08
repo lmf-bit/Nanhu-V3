@@ -230,7 +230,7 @@ class LoadRAWQueue(implicit p: Parameters) extends XSModule
     s0_needCheck.suggestName(s"s0_needCheck_${idx}")
     val s0_addrMaskMatch = dataModule.io.violation(idx).violationMask.asUInt
 
-    //S1: store_s2 resp
+    //S1: store_s2
     //Do not add "init" parameters randomly!!!!
     s1_stFtq(idx) := RegEnable(s0_stFtq(idx), query.valid)
     val s1_addrMaskMatch = RegEnable(s0_addrMaskMatch, query.valid)
@@ -286,7 +286,7 @@ class LoadRAWQueue(implicit p: Parameters) extends XSModule
   rollbackRes.bits.isFlushPipe := false.B
   rollbackRes.bits.isPreWalk := false.B
 
-  io.rollback := rollbackRes
+  io.rollback := Pipe(rollbackRes)
 
 
   io.isFull := freeList.io.empty
