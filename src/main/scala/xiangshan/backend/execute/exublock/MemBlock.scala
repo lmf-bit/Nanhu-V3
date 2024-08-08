@@ -939,7 +939,8 @@ class MemBlockImp(outer: MemBlock) extends BasicExuBlockImp(outer)
     atomicsException := true.B
   }
   val atomicsExceptionAddress = RegEnable(atomicsUnit.io.exceptionAddr.bits, atomicsUnit.io.exceptionAddr.valid)
-  io.lsqio.exceptionAddr.vaddr := RegNext(Mux(atomicsException, atomicsExceptionAddress, lsq.io.exceptionAddr.vaddr))
+  io.lsqio.exceptionAddr.vaddr := RegEnable(Mux(atomicsException, atomicsExceptionAddress, lsq.io.exceptionAddr.vaddr),
+                                  atomicsUnit.io.exceptionAddr.valid || lsq.io.exceptionAddrValid)
   XSError(atomicsException && atomicsUnit.io.in.valid, "new instruction before exception triggers\n")
 
   io.memInfo.sqFull := RegNext(lsq.io.sqFull)

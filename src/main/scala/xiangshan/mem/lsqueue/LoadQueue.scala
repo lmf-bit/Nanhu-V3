@@ -149,7 +149,7 @@ class LoadQueue(implicit p: Parameters) extends XSModule
     val lqSafeDeq = Input(new RobPtr)
     val robHead = Input(new RobPtr)
     val release = Flipped(ValidIO(new Release))
-    val exceptionAddr = new ExceptionAddrIO
+    val exceptionAddr = ValidIO(new ExceptionAddrIO)
     val lqFull = Output(Bool())
     val lqCancelCnt = Output(UInt(log2Up(LoadQueueSize + 1).W))
     val lqDeq = Output(UInt(log2Up(CommitWidth + 1).W))
@@ -462,7 +462,9 @@ class LoadQueue(implicit p: Parameters) extends XSModule
 //  })
 //  exceptionGen.io.clean := ffCleanConds.reduce(_ || _)
   exceptionGen.io.clean := false.B  //todo
-  io.exceptionAddr.vaddr := exceptionInfo.bits.vaddr
+  io.exceptionAddr.valid := exceptionInfo.valid
+  io.exceptionAddr.bits.vaddr := exceptionInfo.bits.vaddr
+  io.exceptionAddr.bits.isStore := DontCare
 
   (0 until LoadPipelineWidth).foreach(i => {
     io.trigger(i).lqLoadAddrTriggerHitVec := DontCare //todo

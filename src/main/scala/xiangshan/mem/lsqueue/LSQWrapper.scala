@@ -83,6 +83,7 @@ class LsqWrappper(implicit p: Parameters) extends XSModule with HasDCacheParamet
     val rollback = Output(Valid(new Redirect))
     val release = Flipped(ValidIO(new Release))
     val uncache = new UncacheWordIO
+    val exceptionAddrValid = Bool()
     val exceptionAddr = new ExceptionAddrIO
     val sqempty = Output(Bool())
     val issuePtrExt = Output(new SqPtr)
@@ -164,7 +165,7 @@ class LsqWrappper(implicit p: Parameters) extends XSModule with HasDCacheParamet
   loadQueue.io.rollback <> io.rollback
   loadQueue.io.release <> io.release
   loadQueue.io.trigger <> io.trigger
-  loadQueue.io.exceptionAddr.isStore := DontCare
+  loadQueue.io.exceptionAddr.bits.isStore := DontCare
   loadQueue.io.lqCancelCnt <> io.lqCancelCnt
   loadQueue.io.replayQEnq <> io.replayQEnq
   loadQueue.io.replayQIssue <> io.replayQIssue
@@ -190,7 +191,7 @@ class LsqWrappper(implicit p: Parameters) extends XSModule with HasDCacheParamet
   storeQueue.io.sbuffer <> io.sbuffer
   storeQueue.io.mmioStout <> io.mmioStout
   storeQueue.io.rob := RegNext(io.rob.pendingInst)
-  storeQueue.io.exceptionAddr.isStore := DontCare
+  storeQueue.io.exceptionAddr.bits.isStore := DontCare
   storeQueue.io.issuePtrExt <> io.issuePtrExt
   storeQueue.io.sqCancelCnt <> io.sqCancelCnt
   storeQueue.io.sqDeq <> io.sqDeq
@@ -204,8 +205,9 @@ class LsqWrappper(implicit p: Parameters) extends XSModule with HasDCacheParamet
   // s2:               exception triggered
   // s3: ptr updated & new address
   // address will be used at the next cycle after exception is triggered
-  io.exceptionAddr.vaddr := Mux(RegNext(io.exceptionAddr.isStore), storeQueue.io.exceptionAddr.vaddr, loadQueue.io.exceptionAddr.vaddr)
-
+  val exceptionAddrValid = storeQueue.io.exceptionAddr.valid || loadQueue.io.exceptionAddr.valid
+  io.exceptionAddrValid := exceptionAddrValid
+  io.exceptionAddr.vaddr := Mux(RegNext(io.exceptionAddr.isStore), storeQueue.io.exceptionAddr.bits.vaddr, loadQueue.io.exceptionAddr.bits.vaddr)
   // naive uncache arbiter
   val s_idle :: s_load :: s_store :: Nil = Enum(3)
   val pendingstate = RegInit(s_idle)

@@ -85,7 +85,7 @@ class StoreQueue(implicit p: Parameters) extends XSModule with HasPerfLogging
     val rob = Input(new RobPtr)
     val uncache = new UncacheWordIO
     // val refill = Flipped(Valid(new DCacheLineReq ))
-    val exceptionAddr = new ExceptionAddrIO
+    val exceptionAddr = ValidIO(new ExceptionAddrIO)
     val sqempty = Output(Bool())
     val issuePtrExt = Output(new SqPtr) // used to wake up delayed load/store
     val sqFull = Output(Bool())
@@ -327,7 +327,9 @@ class StoreQueue(implicit p: Parameters) extends XSModule with HasPerfLogging
 
   exceptionGen.io.clean := false.B
 
-  io.exceptionAddr.vaddr := exceptionInfo.bits.vaddr
+  io.exceptionAddr.valid := exceptionInfo.valid
+  io.exceptionAddr.bits.vaddr := exceptionInfo.bits.vaddr
+  io.exceptionAddr.bits.isStore := DontCare
 
   /**
     * Writeback store from store units
