@@ -291,4 +291,7 @@ class LoadRAWQueue(implicit p: Parameters) extends XSModule
 
   io.isFull := freeList.io.empty
   dontTouch(io.isFull)
+
+  XSPerfAccumulate("memBlock_rawQueue_rollback",   io.rollback.valid)
+
 }
