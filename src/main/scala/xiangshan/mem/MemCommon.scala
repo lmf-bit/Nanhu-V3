@@ -19,12 +19,13 @@ package xiangshan.mem
 
 import org.chipsalliance.cde.config.Parameters
 import chisel3._
+import chisel3.experimental.prefix
 import chisel3.util._
 import xiangshan._
 import xs.utils._
 import xiangshan.backend.issue.RsIdx
 import xiangshan.cache._
-import xs.utils.{LookupTree, UIntToMask, CircularQueuePtr}
+import xs.utils.{CircularQueuePtr, LookupTree, UIntToMask}
 import xiangshan.mem.prefetch.PrefetchReqBundle
 import xiangshan.mem.HasL1PrefetchSourceParameter
 
@@ -279,7 +280,7 @@ object RedirectRegDup{
     var map: Map[String, ValidIO[Redirect]] = Map()
 
     for (i <- 0 until len) {
-      map += (name(i) -> Pipe(redirect).suggestName("redirect_dup_" + name(i)))
+      map += (name(i) -> prefix("dup_" + name(i)){Pipe(redirect)})
     }
     map
   }
