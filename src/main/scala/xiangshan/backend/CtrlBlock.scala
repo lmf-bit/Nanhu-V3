@@ -43,6 +43,7 @@ import xiangshan.CtrlBlkTopdownStage
 import xiangshan.frontend.BranchPredictionRedirect
 import huancun.CtrlReq
 import xiangshan.CtrlBlkTopdownStage
+import xiangshan.CtrlBlkTopdownStage
 
 class CtrlToFtqIO(implicit p: Parameters) extends XSBundle {
   val rob_commits = Vec(CommitWidth, Valid(new RobCommitInfo))
@@ -562,6 +563,13 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
     }
   }
   // Update Top-down reasoning in Rename-Dispatch stage
+  topdown_stages(CtrlBlkTopdownStage.REN_DIS.id).foreach(_.reasons(TopDownCounters.ControlRecoveryStall.id) := rename.io.topdown.ctrlRecStall)
+  topdown_stages(CtrlBlkTopdownStage.REN_DIS.id).foreach(_.reasons(TopDownCounters.MemVioRecoveryStall.id)  := rename.io.topdown.mvioRecStall)
+  topdown_stages(CtrlBlkTopdownStage.REN_DIS.id).foreach(_.reasons(TopDownCounters.OtherCoreStall.id)       := rename.io.topdown.otherRecStall)
+  topdown_stages(CtrlBlkTopdownStage.REN_DIS.id).foreach(_.reasons(TopDownCounters.IntFlStall.id)        := rename.io.topdown.intFlStall)
+  topdown_stages(CtrlBlkTopdownStage.REN_DIS.id).foreach(_.reasons(TopDownCounters.FpFlStall.id)         := rename.io.topdown.fpFlStall)
+  topdown_stages(CtrlBlkTopdownStage.REN_DIS.id).foreach(_.reasons(TopDownCounters.vtypeRenameStall.id)  := rename.io.topdown.vtypeRenameStall)
+  topdown_stages(CtrlBlkTopdownStage.REN_DIS.id).foreach(_.reasons(TopDownCounters.MultiFlStall.id)      := rename.io.topdown.multiFlStall)
 
   if (env.EnableTopDown) {
     val stage2Redirect_valid_when_pending = pendingRedirect && redirectDelay.valid

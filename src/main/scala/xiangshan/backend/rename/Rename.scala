@@ -76,6 +76,16 @@ class Rename(implicit p: Parameters) extends XSModule  with HasCircularQueuePtrH
     val snptIsFull= Input(Bool())
     val vlUpdate = Input(Valid(UInt(log2Ceil(VLEN + 1).W)))
     val dispatchIn = Vec(RenameWidth, Input(Valid(new RobPtr)))
+    val topdown = new Bundle{
+      val ctrlRecStall = Output(Bool())
+      val mvioRecStall = Output(Bool())
+      val otherRecStall = Output(Bool())
+      val intFlStall = Output(Bool())
+      val fpFlStall = Output(Bool())
+      val vtypeRenameStall = Output(Bool())
+      val multiFlStall = Output(Bool())
+    }
+
   })
 
   // create free list and rat
@@ -501,5 +511,13 @@ class Rename(implicit p: Parameters) extends XSModule  with HasCircularQueuePtrH
     !fpFreeList.io.canAllocate,
     !vtyperename.io.canAccept)) > 1.U)
   // other stall
-    val otherStall = notRecStall && !intFlStall && !fpFlStall && !vtypeRenameStall
+  val otherStall = notRecStall && !intFlStall && !fpFlStall && !vtypeRenameStall
+
+  io.topdown.ctrlRecStall     := ctrlRecStall
+  io.topdown.mvioRecStall     := mvioRecStall
+  io.topdown.otherRecStall    := otherRecStall
+  io.topdown.intFlStall       := intFlStall
+  io.topdown.fpFlStall        := fpFlStall
+  io.topdown.vtypeRenameStall := vtypeRenameStall
+  io.topdown.multiFlStall     := multiFlStall
 }

@@ -437,15 +437,15 @@ package object xiangshan {
     val BackendStall = Value("BackendStall")
 
     // freelist full
-    val IntFlStall = Value("IntFlStall")
-    val FpFlStall = Value("FpFlStall")
     val vtypeRenameStall = Value("vtypeRenameStall")
+    val FpFlStall = Value("FpFlStall")
+    val IntFlStall = Value("IntFlStall")
     val MultiFlStall = Value("MultiFlStall")
 
     // bad speculation
-    val ControlRecoveryStall = Value("ControlRecoveryStall")
-    val MemVioRecoveryStall = Value("MemVioRecoveryStall")
     val OtherRecoveryStall = Value("OtherRecoveryStall")
+    val MemVioRecoveryStall = Value("MemVioRecoveryStall")
+    val ControlRecoveryStall = Value("ControlRecoveryStall")
 
     val OtherCoreStall = Value("OtherCoreStall")
     val NumStallReasons = Value("NumStallReasons")
