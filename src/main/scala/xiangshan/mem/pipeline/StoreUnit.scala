@@ -191,6 +191,7 @@ class StoreUnit(implicit p: Parameters) extends XSModule with HasPerfLogging {
   s3_out := DontCare
   s3_out.valid := s3_in.valid && !s3_in.bits.uop.robIdx.needFlush(io.redirect)
   s3_out.bits.uop := s3_in.bits.uop
+  s3_out.bits.uop.cf.exceptionVec := ExceptionNO.selectByFu(s3_in.bits.uop.cf.exceptionVec, staCfg)
   s3_out.bits.data := DontCare
   s3_out.bits.redirectValid := false.B
   s3_out.bits.redirect := DontCare
