@@ -28,10 +28,10 @@ import freechips.rocketchip.diplomacy.{LazyModule, LazyModuleImp}
 abstract class BasicExuBlock(implicit p:Parameters) extends LazyModule{
   val issueNode = new ExuBlockIssueNode
   val writebackNode = new ExuBlockWritebackNode
-  protected val mulNum:Int = p(XSCoreParamsKey).exuParameters.AluMulCnt
-  protected val divNum:Int = p(XSCoreParamsKey).exuParameters.AluDivCnt
-  protected val miscNum:Int = p(XSCoreParamsKey).exuParameters.AluMiscCnt
-  protected val jmpNum:Int = p(XSCoreParamsKey).exuParameters.JmpCnt
+  protected val aluMulDivStdNum: Int = p(XSCoreParamsKey).exuParameters.AluMulDivStdCnt
+  protected val aluNum: Int = p(XSCoreParamsKey).exuParameters.AluCnt
+  protected val bruJmpMiscNum: Int = p(XSCoreParamsKey).exuParameters.BruJmpMiscCnt
+  protected val jmpNum:Int = p(XSCoreParamsKey).exuParameters.BruJmpMiscCnt
   protected val fmaNum:Int = p(XSCoreParamsKey).exuParameters.FmaCnt
   protected val fmaMiscNum:Int = p(XSCoreParamsKey).exuParameters.FmaMiscCnt
   protected val fmaDivNum:Int = p(XSCoreParamsKey).exuParameters.FmaDivCnt

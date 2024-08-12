@@ -31,6 +31,7 @@ case class ExuComplexParam
 ){
   val name: String = exuConfigs.head.complexName
   val hasJmp: Boolean = exuConfigs.map(_.exuType == ExuType.jmp).reduce(_ || _)
+  val hasBru: Boolean = exuConfigs.map(_.exuType == ExuType.bru).reduce(_ || _)
   val hasMisc: Boolean = exuConfigs.map(_.exuType == ExuType.misc).reduce(_ || _)
   val hasAlu: Boolean = exuConfigs.map(_.exuType == ExuType.alu).reduce(_ || _)
   val hasMul: Boolean = exuConfigs.map(_.exuType == ExuType.mul).reduce(_ || _)
@@ -53,15 +54,15 @@ case class ExuComplexParam
   val intSrcNum:Int = exuConfigs.map(_.intSrcNum).max
   val fpSrcNum:Int = exuConfigs.map(_.fpSrcNum).max
 
-  val isAluDiv:Boolean = hasAlu && hasDiv
-  val isAluMisc:Boolean = hasAlu && hasMisc
-  val isAluMul:Boolean = hasAlu && hasMul
   val isFmac:Boolean = hasFmac && !hasFdiv && !hasFmisc
   val isFmaDiv:Boolean = hasFmac && hasFdiv
   val isFmaMisc:Boolean = hasFmac && hasFmisc
   val isSta:Boolean = hasSta
   val isStd:Boolean = hasStd
   val isLdu:Boolean = hasLoad
+  val isAluMulDivStd: Boolean = hasAlu && hasMul && hasDiv
+  val isBruJmpMisc: Boolean = hasBru && hasMisc && hasJmp
+  val isAlu: Boolean = hasAlu && !hasMul && !hasDiv
 
   val needToken:Boolean = exuConfigs.map(_.needToken).reduce(_||_)
 

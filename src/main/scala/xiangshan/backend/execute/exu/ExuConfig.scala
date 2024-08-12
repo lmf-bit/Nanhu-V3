@@ -22,54 +22,56 @@ package xiangshan.backend.execute.exu
 import xiangshan.backend.execute.fu.FuConfig
 import chisel3._
 object ExuType{
-  def jmp = 0
-  def alu = 1
-  def mul = 2
-  def div = 3
-  def ldu = 4
-  def sta = 5
-  def std = 6
+  def jmp   = 0
+  def alu   = 1
+  def mul   = 2
+  def div   = 3
+  def ldu   = 4
+  def sta   = 5
+  def std   = 6
   def fmisc = 7
-  def fmac = 8
-  def fdiv = 9
-  def valu = 10
-  def vmac = 11
-  def vfp = 12
-  def vdiv = 13
+  def fmac  = 8
+  def fdiv  = 9
+  def valu  = 10
+  def vmac  = 11
+  def vfp   = 12
+  def vdiv  = 13
   def vperm = 14
-  def s2v = 15
-  def sldu = 16
+  def s2v   = 15
+  def sldu  = 16
   def vmask = 17
-  def misc = 18
+  def misc  = 18
+  def bru   = 19
 
   private val mapping = Map(
-    jmp -> "jmp",
-    alu -> "alu",
-    mul -> "mul",
-    div -> "div",
-    ldu -> "ldu",
-    sta -> "sta",
-    std -> "std",
+    jmp   -> "jmp",
+    alu   -> "alu",
+    mul   -> "mul",
+    div   -> "div",
+    ldu   -> "ldu",
+    sta   -> "sta",
+    std   -> "std",
     fmisc -> "fmisc",
-    fmac -> "fmac",
-    fdiv -> "fdiv",
-    valu -> "valu",
-    vfp -> "vfp",
-    vdiv -> "vdiv",
-    vmac -> "vmac",
+    fmac  -> "fmac",
+    fdiv  -> "fdiv",
+    valu  -> "valu",
+    vfp   -> "vfp",
+    vdiv  -> "vdiv",
+    vmac  -> "vmac",
     vperm -> "vperm",
-    s2v -> "s2v",
-    sldu -> "sldu",
+    s2v   -> "s2v",
+    sldu  -> "sldu",
     vmask -> "vmask",
-    misc -> "misc"
+    misc  -> "misc",
+    bru   -> "bru"
   )
 
-  def intTypes: Seq[Int] = Seq(alu, mul, div, jmp, misc)
+  def intTypes: Seq[Int] = Seq(alu, mul, div, jmp, misc, bru)
   def memTypes: Seq[Int] = Seq(ldu, sta, std, sldu)
   def fpTypes: Seq[Int] = Seq(fmisc, fmac, fdiv)
   def vecTypes: Seq[Int] = Seq(vfp, valu, vperm, vmac, vdiv, s2v)
   def typeToString(in:Int):String = mapping(in)
-  def bypassIntList: Seq[Int] = Seq(alu, mul, ldu, jmp)
+  def bypassIntList: Seq[Int] = Seq(alu, mul, ldu, jmp, bru)
   def bypassFpList: Seq[Int] = Seq(fmac)
 }
 
