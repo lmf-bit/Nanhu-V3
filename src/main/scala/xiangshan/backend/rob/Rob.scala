@@ -77,6 +77,13 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
     val cpu_halt = Output(Bool())
     val wfi_enable = Input(Bool())
     val wbFromMergeBuffer = Vec(VectorMergeWbWidth, Flipped(ValidIO(new ExuOutput)))
+    val topdown = new Bundle{
+      val commitNotFull = Output(Bool())
+      val blkInstType = Output(FuType())
+      val blkInstIsCompressed = Output(Bool())
+      val commitBlkByRedirect = Output(Bool())
+      val commitBlkByTrap = Output(Bool())
+    }
   })
 
   val wbWithFFlag = writebackIn.filter(wb => wb._1.writeFFlags)
@@ -1041,15 +1048,36 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
   for(i <- (0 until (CommitWidth+1))){
     XSPerfAccumulate(s"commitInstr_${i}_per_cycle", ifCommitReg(trueCommitCnt) === i.U)
   }
-  val hasBlkCommit = io.commits.commitValid.contains(true.B) && io.commits.commitValid.contains(false.B)
-  when(hasBlkCommit){
-    for (fuType <- FuType.functionNameMap.keys) {
-    val fuName = FuType.functionNameMap(fuType)
-    val firstInvalidCommitUop = PriorityMux(io.commits.commitValid.map(v => !v), commitDebugUop)
-    val commitIsFuType = firstInvalidCommitUop.ctrl.fuType === fuType.U
-    XSPerfAccumulate(s"commitInstrBlockBy_${fuName}_instr_cnt", commitIsFuType)
+
+  val commitNotFull = io.commits.commitValid.contains(true.B) && io.commits.commitValid.contains(false.B)
+  val firstInvalidIdx = PriorityEncoder(io.commits.commitValid.map(v => !v).reverse :+ true.B)
+  val commitFutype = Wire(FuType())
+  val blkIsCompress = Wire(Bool())
+  when(state === s_walk){
+    commitFutype := 0.U
+    blkIsCompress := false.B
+  }.elsewhen(state === s_idle){
+    when(commitNotFull && !trapBlockCommit){
+      for (fuType <- FuType.functionNameMap.keys) {
+      val fuName = FuType.functionNameMap(fuType)
+      val firstInvalidCommitUop = PriorityMux(io.commits.commitValid.map(v => !v), commitDebugUop)
+      commitFutype := firstInvalidCommitUop.ctrl.fuType === fuType.U
+      blkIsCompress := firstInvalidCommitUop.compressInstNum =/= 1.U
+      XSPerfAccumulate(s"commitInstrBlockBy_${fuName}_instr_cnt", commitFutype === fuType.U )
+      }
     }
+  }.otherwise{
+    commitFutype := 0.U
+    blkIsCompress := false.B
+    assert(false.B, "Rob has no other state")
   }
+  io.topdown.commitNotFull := commitNotFull && !trapBlockCommit && (state === s_idle)
+  io.topdown.blkInstType := commitFutype
+  io.topdown.blkInstIsCompressed := blkIsCompress
+  val someCmtBlocked = deqPtrGenModule.io.commitValid.zip(io.commits.commitValid).map{case(deqV, cmtV) => deqV ^ cmtV}.reduce(_ || _) && (state === s_idle)
+  io.topdown.commitBlkByRedirect := someCmtBlocked && io.redirect.valid
+  io.topdown.commitBlkByTrap := someCmtBlocked && (hasWFI || exceptionWaitingRedirect)
+
   val commitIsMove = commitDebugUop.map(_.ctrl.isMove)
   XSPerfAccumulate("commitInstrMove", ifCommit(PopCount(io.commits.commitValid.zip(commitIsMove).map { case (v, m) => v && m })))
   val commitMoveElim = commitDebugUop.map(_.debugInfo.eliminatedMove)
