@@ -1065,6 +1065,9 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
       blkIsCompress := firstInvalidCommitUop.compressInstNum =/= 1.U
       XSPerfAccumulate(s"commitInstrBlockBy_${fuName}_instr_cnt", commitFutype === fuType.U )
       }
+    }.otherwise{
+      commitFutype := 0.U
+      blkIsCompress := false.B
     }
   }.otherwise{
     commitFutype := 0.U
