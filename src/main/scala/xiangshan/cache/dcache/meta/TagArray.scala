@@ -1,24 +1,25 @@
 /***************************************************************************************
-* Copyright (c) 2020-2021 Institute of Computing Technology, Chinese Academy of Sciences
-* Copyright (c) 2020-2021 Peng Cheng Laboratory
-*
-* XiangShan is licensed under Mulan PSL v2.
-* You can use this software according to the terms and conditions of the Mulan PSL v2.
-* You may obtain a copy of Mulan PSL v2 at:
-*          http://license.coscl.org.cn/MulanPSL2
-*
-* THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
-* EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
-* MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
-*
-* See the Mulan PSL v2 for more details.
-***************************************************************************************/
+ * Copyright (c) 2020-2021 Institute of Computing Technology, Chinese Academy of Sciences
+ * Copyright (c) 2020-2021 Peng Cheng Laboratory
+ *
+ * XiangShan is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at:
+ *          http://license.coscl.org.cn/MulanPSL2
+ *
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ *
+ * See the Mulan PSL v2 for more details.
+ ***************************************************************************************/
 
 package xiangshan.cache
 
 import org.chipsalliance.cde.config.Parameters
 import chisel3._
 import chisel3.util._
+import freechips.rocketchip.tilelink.ClientStates
 import xs.utils.mbist.MBISTPipeline
 import xs.utils.sram.SRAMTemplate
 import xiangshan.cache.CacheInstrucion._
@@ -29,23 +30,29 @@ class TagReadReq(implicit p: Parameters) extends DCacheBundle {
 }
 
 class TagWriteReq(implicit p: Parameters) extends TagReadReq {
-  val tag = UInt(tagBits.W)
+  val tag = UInt((tagBits + ClientStates.width).W)
 }
 
 class TagEccWriteReq(implicit p: Parameters) extends TagReadReq {
   val ecc = UInt(eccTagBits.W)
 }
 
+class ErrorWriteReq(implicit p: Parameters) extends MetaReadReq {
+  val error = Bool()
+}
+
 class TagArray(parentName:String = "Unknown")(implicit p: Parameters) extends DCacheModule {
   val io = IO(new Bundle() {
     val read = Flipped(DecoupledIO(new TagReadReq))
-    val resp = Output(Vec(nWays, UInt(tagBits.W)))
+    val resp = Output(Vec(nWays, UInt((tagBits + ClientStates.width).W)))
     val write = Flipped(DecoupledIO(new TagWriteReq))
+
     // ecc
     val ecc_read = Flipped(DecoupledIO(new TagReadReq))
     val ecc_resp = Output(Vec(nWays, UInt(eccTagBits.W)))
     val ecc_write = Flipped(DecoupledIO(new TagEccWriteReq))
   })
+
   // TODO: reset is unnecessary?
   val rst_cnt = RegInit(0.U(log2Up(nSets + 1).W))
   val rst = rst_cnt < nSets.U
@@ -54,11 +61,11 @@ class TagArray(parentName:String = "Unknown")(implicit p: Parameters) extends DC
   val wdata = Mux(rst, rstVal, io.write.bits.tag)
   val wmask = Mux(rst || (nWays == 1).B, (-1).asSInt, io.write.bits.way_en.asSInt).asBools
   val rmask = Mux(rst || (nWays == 1).B, (-1).asSInt, io.read.bits.way_en.asSInt).asBools
-  when (rst) {
+  when(rst) {
     rst_cnt := rst_cnt + 1.U
   }
 
-  val tag_array = Module(new SRAMTemplate(UInt(tagBits.W), set = nSets, way = nWays,
+  val tag_array = Module(new SRAMTemplate(UInt((tagBits + ClientStates.width).W), set = nSets, way = nWays,
     shouldReset = false, holdRead = false, singlePort = true, hasClkGate = true,
     hasMbist = coreParams.hasMbist,
     hasShareBus = coreParams.hasShareBus,
@@ -89,7 +96,6 @@ class TagArray(parentName:String = "Unknown")(implicit p: Parameters) extends DC
 
   // tag read
   val ren = io.read.fire
-
   tag_array.io.r.req.valid := ren
   tag_array.io.r.req.bits.apply(setIdx = io.read.bits.idx)
   io.resp := tag_array.io.r.resp.data
@@ -99,9 +105,9 @@ class TagArray(parentName:String = "Unknown")(implicit p: Parameters) extends DC
   // ecc_array.io.r.req.bits.apply(setIdx = io.ecc_read.bits.idx)
   io.ecc_resp := 0.U.asTypeOf(io.ecc_resp.cloneType)//ecc_array.io.r.resp.data
 
-  io.write.ready := !rst
+  io.write.ready := true.B
   io.read.ready := !wen
-  io.ecc_write.ready := !rst
+  io.ecc_write.ready := true.B
   io.ecc_read.ready := !wen//!ecc_wen
 }
 
@@ -306,10 +312,6 @@ class DuplicatedTagArrayReg(readPorts: Int, parentName:String = "Unknown")(impli
 }
 
 
-
-
-
-
 class DuplicatedTagArray(readPorts: Int, parentName:String = "Unknown")(implicit p: Parameters) extends DCacheModule {
   val io = IO(new Bundle() {
     val read = Vec(readPorts, Flipped(DecoupledIO(new TagReadReq)))
@@ -330,7 +332,7 @@ class DuplicatedTagArray(readPorts: Int, parentName:String = "Unknown")(implicit
 
   def getECCFromEncTag(encTag: UInt) = {
     require(encTag.getWidth == encTagBits)
-    encTag(encTagBits - 1, tagBits)
+    encTag(encTagBits - 1, tagBits + ClientStates.width)
   }
 
   for (i <- 0 until readPorts) {
@@ -346,18 +348,21 @@ class DuplicatedTagArray(readPorts: Int, parentName:String = "Unknown")(implicit
     array(i).io.read <> io.read(i)
     array(i).io.ecc_read.valid := io.read(i).valid
     array(i).io.ecc_read.bits := io.read(i).bits
-    io.resp(i) := (array(i).io.ecc_resp zip array(i).io.resp).map { case (e, r) => Cat(e, r) }
+    io.resp(i) := array(i).io.resp
     // extra ports for cache op
-//    array(i).io.ecc_write.valid := false.B
-//    array(i).io.ecc_write.bits := DontCare
-    io.read(i).ready := array(i).io.read.ready && array(i).io.ecc_read.ready
+    //    array(i).io.ecc_write.valid := false.B
+    //    array(i).io.ecc_write.bits := DontCare
+    //    io.read(i).ready := array(i).io.read.ready && array(i).io.ecc_read.ready
+
+
+    io.read(i).ready := array(i).io.read.ready
   }
   io.write.ready := true.B
 
   // deal with customized cache op
   require(nWays <= 32)
   io.cacheOp.resp.bits := DontCare
-  val cacheOpShouldResp = WireInit(false.B) 
+  val cacheOpShouldResp = WireInit(false.B)
 
   when (io.cacheOp.req.valid && isReadTag(io.cacheOp.req.bits.opCode)){
     for (i <- 0 until (readPorts / 3)) {
@@ -368,11 +373,11 @@ class DuplicatedTagArray(readPorts: Int, parentName:String = "Unknown")(implicit
     cacheOpShouldResp := true.B
   }
   when (io.cacheOp_req_dup(0).valid && isReadTagECC(io.cacheOp_req_bits_opCode_dup(0))) {
-  //   for (i <- 0 until (readPorts / 3)) {
-  //     array(i).io.ecc_read.valid := true.B
-  //     array(i).io.ecc_read.bits.idx := io.cacheOp.req.bits.index
-  //     array(i).io.ecc_read.bits.way_en := UIntToOH(io.cacheOp.req.bits.wayNum(4, 0))
-  //   }
+    //   for (i <- 0 until (readPorts / 3)) {
+    //     array(i).io.ecc_read.valid := true.B
+    //     array(i).io.ecc_read.bits.idx := io.cacheOp.req.bits.index
+    //     array(i).io.ecc_read.bits.way_en := UIntToOH(io.cacheOp.req.bits.wayNum(4, 0))
+    //   }
     cacheOpShouldResp := true.B
   }
   when (io.cacheOp_req_dup(1).valid && isWriteTag(io.cacheOp_req_bits_opCode_dup(1))){
@@ -385,15 +390,15 @@ class DuplicatedTagArray(readPorts: Int, parentName:String = "Unknown")(implicit
     cacheOpShouldResp := true.B
   }
   when(io.cacheOp_req_dup(2).valid && isWriteTagECC(io.cacheOp_req_bits_opCode_dup(2))){
-  //   for (i <- 0 until (readPorts / 3)) {
-  //     array(i).io.ecc_write.valid := true.B
-  //     array(i).io.ecc_write.bits.idx := io.cacheOp.req.bits.index
-  //     array(i).io.ecc_write.bits.way_en := UIntToOH(io.cacheOp.req.bits.wayNum(4, 0))
-  //     array(i).io.ecc_write.bits.ecc := io.cacheOp.req.bits.write_tag_ecc
-  //   }
+    //   for (i <- 0 until (readPorts / 3)) {
+    //     array(i).io.ecc_write.valid := true.B
+    //     array(i).io.ecc_write.bits.idx := io.cacheOp.req.bits.index
+    //     array(i).io.ecc_write.bits.way_en := UIntToOH(io.cacheOp.req.bits.wayNum(4, 0))
+    //     array(i).io.ecc_write.bits.ecc := io.cacheOp.req.bits.write_tag_ecc
+    //   }
     cacheOpShouldResp := true.B
   }
-  
+
 
   when (io.cacheOp_req_dup(3).valid && isReadTag(io.cacheOp_req_bits_opCode_dup(3))){
     for (i <- (readPorts / 3) until ((readPorts / 3) * 2)) {
@@ -404,11 +409,11 @@ class DuplicatedTagArray(readPorts: Int, parentName:String = "Unknown")(implicit
     cacheOpShouldResp := true.B
   }
   when (io.cacheOp_req_dup(4).valid && isReadTagECC(io.cacheOp_req_bits_opCode_dup(4))) {
-  //   for (i <- (readPorts / 3) until ((readPorts / 3) * 2)) {
-  //     array(i).io.ecc_read.valid := true.B
-  //     array(i).io.ecc_read.bits.idx := io.cacheOp.req.bits.index
-  //     array(i).io.ecc_read.bits.way_en := UIntToOH(io.cacheOp.req.bits.wayNum(4, 0))
-  //   }
+    //   for (i <- (readPorts / 3) until ((readPorts / 3) * 2)) {
+    //     array(i).io.ecc_read.valid := true.B
+    //     array(i).io.ecc_read.bits.idx := io.cacheOp.req.bits.index
+    //     array(i).io.ecc_read.bits.way_en := UIntToOH(io.cacheOp.req.bits.wayNum(4, 0))
+    //   }
     cacheOpShouldResp := true.B
   }
   when (io.cacheOp_req_dup(5).valid && isWriteTag(io.cacheOp_req_bits_opCode_dup(5))){
@@ -421,12 +426,12 @@ class DuplicatedTagArray(readPorts: Int, parentName:String = "Unknown")(implicit
     cacheOpShouldResp := true.B
   }
   when(io.cacheOp_req_dup(6).valid && isWriteTagECC(io.cacheOp_req_bits_opCode_dup(6))){
-  //   for (i <- (readPorts / 3) until ((readPorts / 3) * 2)) {
-  //     array(i).io.ecc_write.valid := true.B
-  //     array(i).io.ecc_write.bits.idx := io.cacheOp.req.bits.index
-  //     array(i).io.ecc_write.bits.way_en := UIntToOH(io.cacheOp.req.bits.wayNum(4, 0))
-  //     array(i).io.ecc_write.bits.ecc := io.cacheOp.req.bits.write_tag_ecc
-  //   }
+    //   for (i <- (readPorts / 3) until ((readPorts / 3) * 2)) {
+    //     array(i).io.ecc_write.valid := true.B
+    //     array(i).io.ecc_write.bits.idx := io.cacheOp.req.bits.index
+    //     array(i).io.ecc_write.bits.way_en := UIntToOH(io.cacheOp.req.bits.wayNum(4, 0))
+    //     array(i).io.ecc_write.bits.ecc := io.cacheOp.req.bits.write_tag_ecc
+    //   }
     cacheOpShouldResp := true.B
   }
 
@@ -439,11 +444,11 @@ class DuplicatedTagArray(readPorts: Int, parentName:String = "Unknown")(implicit
     cacheOpShouldResp := true.B
   }
   when (io.cacheOp_req_dup(8).valid && isReadTagECC(io.cacheOp_req_bits_opCode_dup(8))) {
-  //   for (i <- ((readPorts / 3) * 2) until readPorts) {
-  //     array(i).io.ecc_read.valid := true.B
-  //     array(i).io.ecc_read.bits.idx := io.cacheOp.req.bits.index
-  //     array(i).io.ecc_read.bits.way_en := UIntToOH(io.cacheOp.req.bits.wayNum(4, 0))
-  //   }
+    //   for (i <- ((readPorts / 3) * 2) until readPorts) {
+    //     array(i).io.ecc_read.valid := true.B
+    //     array(i).io.ecc_read.bits.idx := io.cacheOp.req.bits.index
+    //     array(i).io.ecc_read.bits.way_en := UIntToOH(io.cacheOp.req.bits.wayNum(4, 0))
+    //   }
     cacheOpShouldResp := true.B
   }
   when (io.cacheOp_req_dup(9).valid && isWriteTag(io.cacheOp_req_bits_opCode_dup(9))){
@@ -456,12 +461,12 @@ class DuplicatedTagArray(readPorts: Int, parentName:String = "Unknown")(implicit
     cacheOpShouldResp := true.B
   }
   when(io.cacheOp_req_dup(10).valid && isWriteTagECC(io.cacheOp_req_bits_opCode_dup(10))){
-  //   for (i <- ((readPorts / 3) * 2) until readPorts) {
-  //     array(i).io.ecc_write.valid := true.B
-  //     array(i).io.ecc_write.bits.idx := io.cacheOp.req.bits.index
-  //     array(i).io.ecc_write.bits.way_en := UIntToOH(io.cacheOp.req.bits.wayNum(4, 0))
-  //     array(i).io.ecc_write.bits.ecc := io.cacheOp.req.bits.write_tag_ecc
-  //   }
+    //   for (i <- ((readPorts / 3) * 2) until readPorts) {
+    //     array(i).io.ecc_write.valid := true.B
+    //     array(i).io.ecc_write.bits.idx := io.cacheOp.req.bits.index
+    //     array(i).io.ecc_write.bits.way_en := UIntToOH(io.cacheOp.req.bits.wayNum(4, 0))
+    //     array(i).io.ecc_write.bits.ecc := io.cacheOp.req.bits.write_tag_ecc
+    //   }
     cacheOpShouldResp := true.B
   }
 
@@ -469,4 +474,61 @@ class DuplicatedTagArray(readPorts: Int, parentName:String = "Unknown")(implicit
   io.cacheOp.resp.bits.read_tag_low := Mux(io.cacheOp.resp.valid, array(0).io.resp(RegNext(io.cacheOp.req.bits.wayNum)), 0.U)
   io.cacheOp.resp.bits.read_tag_ecc := 0.U//Mux(io.cacheOp.resp.valid, array(0).io.ecc_resp(RegNext(io.cacheOp.req.bits.wayNum)), 0.U)
   // TODO: deal with duplicated array
+}
+
+class ErrorArray(readPorts: Int, writePorts: Int)(implicit p: Parameters) extends DCacheModule {
+  val io = IO(new Bundle() {
+    val read = Vec(readPorts, Flipped(DecoupledIO(new TagReadReq)))
+    val resp = Output(Vec(readPorts, Vec(nWays, Bool())))
+    val write = Vec(writePorts, Flipped(DecoupledIO(new ErrorWriteReq)))
+    // customized cache op port
+    // val cacheOp = Flipped(new L1CacheInnerOpIO)
+  })
+
+  val meta_array = RegInit(
+    VecInit(Seq.fill(nSets)(
+      VecInit(Seq.fill(nWays)(0.U.asTypeOf(false.B)))
+    ))
+  )
+
+  val s0_way_wen = Wire(Vec(nWays, Vec(writePorts, Bool())))
+  val s1_way_wen = Wire(Vec(nWays, Vec(writePorts, Bool())))
+  val s1_way_waddr = Wire(Vec(nWays, Vec(writePorts, UInt(idxBits.W))))
+  val s1_way_wdata = Wire(Vec(nWays, Vec(writePorts, Bool())))
+
+  (io.read.zip(io.resp)).zipWithIndex.foreach {
+    case ((read, resp), i) =>
+      read.ready := true.B
+      (0 until nWays).map(way => {
+        val read_way_bypass = WireInit(false.B)
+        val bypass_data = Wire(Bool())
+        bypass_data := DontCare
+        (0 until writePorts).map(wport =>
+          when(s1_way_wen(way)(wport) && s1_way_waddr(way)(wport) === read.bits.idx){
+            read_way_bypass := true.B
+            bypass_data := s1_way_wdata(way)(wport)
+          }
+        )
+        resp(way) := Mux(
+          RegEnable(read_way_bypass, read.valid),
+          RegEnable(bypass_data, read_way_bypass),
+          meta_array(RegEnable(read.bits.idx, read.valid))(way)
+        )
+      })
+  }
+
+  io.write.zipWithIndex.foreach {
+    case (write, wport) =>
+      write.ready := true.B
+      write.bits.way_en.asBools.zipWithIndex.foreach {
+        case (wen, way) =>
+          s0_way_wen(way)(wport) := write.valid && wen
+          s1_way_wen(way)(wport) := RegNext(s0_way_wen(way)(wport))
+          s1_way_waddr(way)(wport) := RegEnable(write.bits.idx, s0_way_wen(way)(wport))
+          s1_way_wdata(way)(wport) := RegEnable(write.bits.error, s0_way_wen(way)(wport))
+          when (s1_way_wen(way)(wport)) {
+            meta_array(s1_way_waddr(way)(wport))(way) := s1_way_wdata(way)(wport)
+          }
+      }
+  }
 }

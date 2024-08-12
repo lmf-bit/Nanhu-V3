@@ -62,7 +62,7 @@ case class L2TLBParameters
   spSize: Int = 16,
   spReplacer: Option[String] = Some("plru"),
   // dtlb filter
-  // filterSize: Int = 8,
+  filterSize: Int = 8,
 
   // miss queue, add more entries than 'must require'
   // 0 for easier bug trigger, please set as big as u can, 8 maybe

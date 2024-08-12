@@ -313,7 +313,7 @@ class PTWNewFilter(Width: Int, FenceDelay: Int)(implicit p: Parameters) extends 
   require(exuParameters.LduCnt == 2, "If the LduCnt value is modified, " +
     "please ensure to update the PTWNewFilter and PTWFilterEntry accordingly.")
   val load_filter = VecInit(Seq.fill(1) {
-    val load_entry = Module(new PTWFilterEntry(Width = exuParameters.LduCnt + 1, Size = loadfiltersize, hasHint = true))
+    val load_entry = Module(new PTWFilterEntry(Width = exuParameters.LduCnt, Size = loadfiltersize, hasHint = true))
     load_entry.io
   })
 
@@ -323,11 +323,12 @@ class PTWNewFilter(Width: Int, FenceDelay: Int)(implicit p: Parameters) extends 
     val store_entry = Module(new PTWFilterEntry(Width = exuParameters.StuCnt, Size = storefiltersize))
     store_entry.io
   })
+  require(ld_tlb_ports + exuParameters.StuCnt == Width)
 
   val filter = load_filter ++ store_filter
 
-  load_filter.map(_.tlb.req := io.tlb.req.take(exuParameters.LduCnt + 1))
-  store_filter.map(_.tlb.req := io.tlb.req.drop(exuParameters.LduCnt + 1).take(exuParameters.StuCnt))
+  load_filter.map(_.tlb.req := io.tlb.req.take(exuParameters.LduCnt))
+  store_filter.map(_.tlb.req := io.tlb.req.drop(ld_tlb_ports).take(exuParameters.StuCnt))
 
   val flush = DelayN(io.sfence.valid || io.csr.satp.changed, FenceDelay)
   val ptwResp = RegEnable(io.ptw.resp.bits, io.ptw.resp.fire)

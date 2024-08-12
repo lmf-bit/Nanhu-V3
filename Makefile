@@ -34,7 +34,7 @@ NUM_CORES ?= 1
 ABS_WORK_DIR := $(shell pwd)
 # VCS sim options
 RUN_BIN_DIR ?= $(ABS_WORK_DIR)/ready-to-run
-RUN_BIN ?= coremark-2-iteration
+RUN_BIN ?= coremark-2-iteration.bin
 CONSIDER_FSDB ?= 1
 
 ifdef FLASH

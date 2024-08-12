@@ -22,6 +22,7 @@ import chisel3._
 import chisel3.util._
 import xiangshan.L1CacheErrorInfo
 import xiangshan.cache.CacheInstrucion._
+import xiangshan.mem.HasL1PrefetchSourceParameter
 
 class Meta(implicit p: Parameters) extends DCacheBundle {
   val coh = new ClientMetadata
@@ -44,9 +45,6 @@ class MetaWriteReq(implicit p: Parameters) extends MetaReadReq {
   val meta = new Meta
 }
 
-class ErrorWriteReq(implicit p: Parameters) extends MetaReadReq {
-  val error = Bool()
-}
 
 class AsynchronousMetaArray(readPorts: Int, writePorts: Int)(implicit p: Parameters) extends DCacheModule {
   val io = IO(new Bundle() {
@@ -103,32 +101,34 @@ class AsynchronousMetaArray(readPorts: Int, writePorts: Int)(implicit p: Paramet
   }
 }
 
-class ErrorArray(readPorts: Int, writePorts: Int)(implicit p: Parameters) extends DCacheModule {
+class SourceMetaWriteReq(implicit p: Parameters) extends MetaReadReq  with HasL1PrefetchSourceParameter{
+  val source = UInt(L1PfSourceBits.W)
+}
+
+class L1PrefetchSourceArray(readPorts: Int, writePorts: Int)(implicit p: Parameters) extends DCacheModule with HasL1PrefetchSourceParameter {
   val io = IO(new Bundle() {
     val read = Vec(readPorts, Flipped(DecoupledIO(new MetaReadReq)))
-    val resp = Output(Vec(readPorts, Vec(nWays, Bool())))
-    val write = Vec(writePorts, Flipped(DecoupledIO(new ErrorWriteReq)))
-    // customized cache op port 
-    // val cacheOp = Flipped(new L1CacheInnerOpIO)
+    val resp = Output(Vec(readPorts, Vec(nWays, UInt(L1PfSourceBits.W))))
+    val write = Vec(writePorts, Flipped(DecoupledIO(new SourceMetaWriteReq)))
   })
 
   val meta_array = RegInit(
     VecInit(Seq.fill(nSets)(
-      VecInit(Seq.fill(nWays)(0.U.asTypeOf(false.B)))
+      VecInit(Seq.fill(nWays)(0.U(L1PfSourceBits.W)))
     ))
   )
 
   val s0_way_wen = Wire(Vec(nWays, Vec(writePorts, Bool())))
   val s1_way_wen = Wire(Vec(nWays, Vec(writePorts, Bool())))
   val s1_way_waddr = Wire(Vec(nWays, Vec(writePorts, UInt(idxBits.W))))
-  val s1_way_wdata = Wire(Vec(nWays, Vec(writePorts, Bool())))
+  val s1_way_wdata = Wire(Vec(nWays, Vec(writePorts, UInt(L1PfSourceBits.W))))
 
   (io.read.zip(io.resp)).zipWithIndex.foreach {
     case ((read, resp), i) =>
       read.ready := true.B
       (0 until nWays).map(way => {
         val read_way_bypass = WireInit(false.B)
-        val bypass_data = Wire(Bool())
+        val bypass_data = Wire(UInt(L1PfSourceBits.W))
         bypass_data := DontCare
         (0 until writePorts).map(wport =>
           when(s1_way_wen(way)(wport) && s1_way_waddr(way)(wport) === read.bits.idx){
@@ -152,7 +152,7 @@ class ErrorArray(readPorts: Int, writePorts: Int)(implicit p: Parameters) extend
           s0_way_wen(way)(wport) := write.valid && wen
           s1_way_wen(way)(wport) := RegNext(s0_way_wen(way)(wport))
           s1_way_waddr(way)(wport) := RegEnable(write.bits.idx, s0_way_wen(way)(wport))
-          s1_way_wdata(way)(wport) := RegEnable(write.bits.error, s0_way_wen(way)(wport))
+          s1_way_wdata(way)(wport) := RegEnable(write.bits.source, s0_way_wen(way)(wport))
           when (s1_way_wen(way)(wport)) {
             meta_array(s1_way_waddr(way)(wport))(way) := s1_way_wdata(way)(wport)
           }

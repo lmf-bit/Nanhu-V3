@@ -13,6 +13,7 @@ import xiangshan.backend.rob.RobPtr
 import xiangshan.cache.{DCacheTLDBypassLduIO, HasDCacheParameters, UncacheWordIO}
 import xiangshan.cache.mmu.{HasTlbConst, VaBundle}
 import xiangshan.frontend.FtqPtr
+import xiangshan.mem.LoadReplayCauses.C_TM
 import xiangshan.vector.VCtrlSignals
 import xiangshan.vector.writeback.VmbPtr
 
@@ -66,6 +67,7 @@ class ReplayInfo(implicit p: Parameters) extends XSBundle{
 
 class LoadTLBWakeUpBundle(implicit p: Parameters) extends XSBundle with HasTlbConst{
   val vpn = UInt(vpnLen.W)
+  val level = UInt(log2Up(Level).W)
 }
 
 class ReplayQUopEntry(implicit p: Parameters) extends XSBundle{
@@ -212,6 +214,7 @@ class LoadReplayQueue(enablePerf: Boolean)(implicit p: Parameters) extends XSMod
   with HasPerfLogging
   with HasDCacheParameters
   with HasCircularQueuePtrHelper
+  with HasTlbConst
 {
   val io = IO(new Bundle() {
     val enq = Vec(LoadPipelineWidth, Flipped(DecoupledIO(new LoadToReplayQueueBundle)))
@@ -237,7 +240,7 @@ class LoadReplayQueue(enablePerf: Boolean)(implicit p: Parameters) extends XSMod
     val mmioPaddr = UInt(PAddrBits.W)
   })
 
-  private val counterRegMax = 32
+  private val counterRegMax = 1024
   private val penaltyRegWidth = log2Up(counterRegMax) + 1
   private val tlbMissCounter = 7
   private val issueSelectParallelN = 8
@@ -293,9 +296,57 @@ class LoadReplayQueue(enablePerf: Boolean)(implicit p: Parameters) extends XSMod
   dontTouch(vaddrVec)
   private val vpnVec = vaddrVec.map(_.asTypeOf(new VaBundle).vpn)
 
-  private def tlbWakeUpCompare(tlbVpn: UInt, replayVpn: UInt): Bool = {
-    tlbVpn === replayVpn
+  private def tlbWakeUpCompare(tlbVpn: UInt, replayVpn: UInt, level: UInt): Bool = {
+    val equal_0 = tlbVpn(vpnnLen * 3 - 1, vpnnLen * 2) === replayVpn(vpnnLen * 3 - 1, vpnnLen * 2)
+    val equal_1 = tlbVpn(vpnnLen * 2 - 1, vpnnLen * 1) === replayVpn(vpnnLen * 2 - 1, vpnnLen * 1)
+    val equal_2 = tlbVpn(vpnnLen * 1 - 1, vpnnLen * 0) === replayVpn(vpnnLen * 1 - 1, vpnnLen * 0)
+
+    val isEqual = MuxCase(false.B, Seq(
+      (level === 0.U) -> equal_0,
+      (level === 1.U) -> (equal_0 && equal_1),
+      (level === 2.U) -> (equal_0 && equal_1 && equal_2)
+    ))
+    isEqual
   }
+
+  private def enqTLBWakeUpHit(portIdx: Int): Bool = {
+    val s0_hint = io.tlbWakeup
+    val s1_hint = Pipe(s0_hint)
+    val s2_hint = Pipe(s1_hint)
+    val hintVec = Seq(s0_hint, s1_hint, s2_hint)
+
+    val hitVec = Wire(Vec(3, Bool()))
+
+    hitVec.zipWithIndex.foreach({case(hit,idx) =>
+      val enq = io.enq(portIdx)
+      val enqVpn = enq.bits.vaddr.asTypeOf(new VaBundle).vpn
+
+      val tlbValid = hintVec(idx).valid
+      val tlbVpn = hintVec(idx).bits.vpn
+      val tlbLevel = hintVec(idx).bits.level
+
+      hit := enq.valid &&
+        tlbValid &&
+        enq.bits.replay.tlb_miss &&
+        tlbWakeUpCompare(tlbVpn, enqVpn, tlbLevel)
+    })
+
+    hitVec.reduce(_|_)
+  }
+
+  private def blockTLBWakeUpHit(replayQIdx: Int): Bool = {
+    val hintValid = io.tlbWakeup.valid
+    val hintVpn = io.tlbWakeup.bits.vpn
+    val hintLevel = io.tlbWakeup.bits.level
+    val replayVpn = vpnVec(replayQIdx)
+
+    val hit = hintValid &&
+      tlbWakeUpCompare(hintVpn,replayVpn,hintLevel) &&
+      allocatedReg(replayQIdx) &&
+      causeReg(replayQIdx)(C_TM)
+    hit
+  }
+
 
   // replayQueue Full Backpressure Logic
   val lqFull = freeList.io.empty
@@ -408,9 +459,9 @@ class LoadReplayQueue(enablePerf: Boolean)(implicit p: Parameters) extends XSMod
         val isReplay = io.enq(j).bits.replay.isReplayQReplay
         // case TLB MISS
         when(io.enq(j).bits.replay.tlb_miss){
-          counterReg(i) := Mux(isReplay, tlbMissCounter.U * penaltyReg(i), tlbMissCounter.U)
+          counterReg(i) := counterRegMax.U  //todo
           penaltyReg(i) := penaltyReg(i) + 1.U
-          blockingReg(i) := true.B
+          blockingReg(i) := Mux(enqTLBWakeUpHit(j), false.B, true.B)
         }
         // case Forward Fail
         when(io.enq(j).bits.replay.fwd_fail){
@@ -454,7 +505,11 @@ class LoadReplayQueue(enablePerf: Boolean)(implicit p: Parameters) extends XSMod
     // otherwise listening the casue whether has been solved
     // case TLB MISS
     when(causeReg(i)(LoadReplayCauses.C_TM)) {
-      blockingReg(i) := !(counterReg(i) === 0.U)
+      val tlbWakeUpHit = blockTLBWakeUpHit(i)
+      dontTouch(tlbWakeUpHit)
+      when(blockTLBWakeUpHit(i) || (counterReg(i) === 0.U)){
+        blockingReg(i) := false.B
+      }
     }
     // case Forward Fail
     when(causeReg(i)(LoadReplayCauses.C_FF)) {

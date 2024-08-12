@@ -162,12 +162,12 @@ object XDecode extends DecodeConstants {
     AUIPC   -> List(SrcType.pc , SrcType.imm, SrcType.DC, FuType.jmp, JumpOpType.auipc, Y, N, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_U),
     JAL     -> List(SrcType.pc , SrcType.imm, SrcType.DC, FuType.jmp, JumpOpType.jal,   Y, N, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_UJ),
     JALR    -> List(SrcType.reg, SrcType.imm, SrcType.DC, FuType.jmp, JumpOpType.jalr,  Y, N, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_I),
-    BEQ     -> List(SrcType.reg, SrcType.reg, SrcType.DC, FuType.alu, ALUOpType.beq,    N, N, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_SB),
-    BNE     -> List(SrcType.reg, SrcType.reg, SrcType.DC, FuType.alu, ALUOpType.bne,    N, N, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_SB),
-    BGE     -> List(SrcType.reg, SrcType.reg, SrcType.DC, FuType.alu, ALUOpType.bge,    N, N, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_SB),
-    BGEU    -> List(SrcType.reg, SrcType.reg, SrcType.DC, FuType.alu, ALUOpType.bgeu,   N, N, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_SB),
-    BLT     -> List(SrcType.reg, SrcType.reg, SrcType.DC, FuType.alu, ALUOpType.blt,    N, N, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_SB),
-    BLTU    -> List(SrcType.reg, SrcType.reg, SrcType.DC, FuType.alu, ALUOpType.bltu,   N, N, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_SB),
+    BEQ     -> List(SrcType.reg, SrcType.reg, SrcType.DC, FuType.bru, ALUOpType.beq,    N, N, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_SB),
+    BNE     -> List(SrcType.reg, SrcType.reg, SrcType.DC, FuType.bru, ALUOpType.bne,    N, N, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_SB),
+    BGE     -> List(SrcType.reg, SrcType.reg, SrcType.DC, FuType.bru, ALUOpType.bge,    N, N, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_SB),
+    BGEU    -> List(SrcType.reg, SrcType.reg, SrcType.DC, FuType.bru, ALUOpType.bgeu,   N, N, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_SB),
+    BLT     -> List(SrcType.reg, SrcType.reg, SrcType.DC, FuType.bru, ALUOpType.blt,    N, N, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_SB),
+    BLTU    -> List(SrcType.reg, SrcType.reg, SrcType.DC, FuType.bru, ALUOpType.bltu,   N, N, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_SB),
 
     // I-type, the immediate12 holds the CSR register.
     CSRRW   -> List(SrcType.reg, SrcType.imm, SrcType.DC, FuType.csr, CSROpType.wrt, Y, N, N, N, Y, Y, N, N, N, VstartType.hold, SelImm.IMM_I),

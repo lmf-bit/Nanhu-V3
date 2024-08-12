@@ -21,9 +21,12 @@ import org.chipsalliance.cde.config.Parameters
 import chisel3._
 import chisel3.util._
 import xiangshan._
+import xs.utils._
 import xiangshan.backend.issue.RsIdx
 import xiangshan.cache._
-import xs.utils.{LookupTree, CircularQueuePtr}
+import xs.utils.{LookupTree, UIntToMask, CircularQueuePtr}
+import xiangshan.mem.prefetch.PrefetchReqBundle
+import xiangshan.mem.HasL1PrefetchSourceParameter
 
 object genWmask {
   def apply(addr: UInt, sizeEncode: UInt): UInt = {
@@ -33,6 +36,24 @@ object genWmask {
       "b10".U -> 0xf.U, //1111
       "b11".U -> 0xff.U //11111111
     )) << addr(2, 0)).asUInt
+  }
+}
+
+object GatedValidRegNext {
+  // 3 is the default minimal width of EDA inserted clock gating cells.
+  // so using `GatedValidRegNext` to signals whoes width is less than 3 may not help.
+
+  // It is useless to clockgate only one bit, so change to RegNext here
+  def apply(next: Bool, init: Bool = false.B): Bool = {
+    val last = WireInit(false.B)
+    last := RegNext(next, init)
+    last
+  }
+
+  def apply(last: Vec[Bool]): Vec[Bool] = {
+    val next = VecInit(Seq.fill(last.size)(false.B))
+    next := RegEnable(last, VecInit(Seq.fill(last.size)(false.B)), last.asUInt =/= next.asUInt)
+    next
   }
 }
 
@@ -84,7 +105,7 @@ object getAfterMask{
 
 
 
-class LsPipelineBundle(implicit p: Parameters) extends XSBundle {
+class LsPipelineBundle(implicit p: Parameters) extends XSBundle with HasDCacheParameters{
   val vaddr = UInt(VAddrBits.W)
   val paddr = UInt(PAddrBits.W)
   // val func = UInt(6.W)
@@ -109,6 +130,17 @@ class LsPipelineBundle(implicit p: Parameters) extends XSBundle {
   val replay = new ReplayInfo
   // debug
   val debugCause = UInt(LoadReplayCauses.allCauses.W)
+  // For debug usage
+  val isFirstIssue = Bool()
+
+  def asPrefetchReqBundle(): PrefetchReqBundle = {
+    val res = Wire(new PrefetchReqBundle)
+    res.vaddr := this.vaddr
+    res.paddr := this.paddr
+    res.pc    := this.uop.cf.pc
+    res.miss  := this.miss
+    res
+  }
 }
 
 class LqWriteBundle(implicit p: Parameters) extends XSBundle {
@@ -146,9 +178,6 @@ class LoadPipelineBundleS0(implicit p: Parameters) extends XSBundle {
   // debug
   val debugCause = UInt(LoadReplayCauses.allCauses.W)
 }
-
-
-
 
 class LoadForwardQueryIO(implicit p: Parameters) extends XSBundle {
   val vaddr = Output(UInt(VAddrBits.W))

@@ -29,15 +29,15 @@ import xs.utils.{SignExt, ZeroExt}
 
 object ImmExtractor {
   def apply(cfg: ExuComplexParam, in: ExuInput, pc: Option[UInt] = None, target: Option[UInt] = None, mmuEnable:Option[Bool] = None)
-           (implicit p: Parameters): ExuInput = {
+            (implicit p: Parameters): ExuInput = {
     if (cfg.hasJmp) {
       val res = Wire(new ExuInput)
-      res := JumpImmExtractor(in, pc.get, target.get, mmuEnable.get)
+      res := Mux(in.uop.ctrl.fuType === FuType.jmp, JumpImmExtractor(in, pc.get, target.get, mmuEnable.get), Mux(in.uop.ctrl.fuType === FuType.bku, BkuImmExtractor(in), AluImmExtractor(in)))
       res.uop.cf.pc := pc.get
       res
     } else if (cfg.hasMul) {
       Mux(in.uop.ctrl.fuType === FuType.bku, BkuImmExtractor(in), AluImmExtractor(in))
-    } else if (cfg.hasDiv || cfg.hasMisc) {
+    } else if (cfg.hasDiv || cfg.hasMisc || cfg.isAlu) {
       AluImmExtractor(in)
     } else if (cfg.hasLoad || cfg.hasSpecialLoad) {
       LoadImmExtractor(in)

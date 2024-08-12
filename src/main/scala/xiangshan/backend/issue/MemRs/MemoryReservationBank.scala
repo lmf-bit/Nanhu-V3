@@ -37,12 +37,9 @@ class MemoryReservationBank(entryNum:Int, stuNum:Int, wakeupWidth:Int, regWkpIdx
     val staSelectInfo = Output(Vec(entryNum, Valid(new SelectInfo)))
     val stdSelectInfo = Output(Vec(entryNum, Valid(new SelectInfo)))
     val lduSelectInfo = Output(Vec(entryNum, Valid(new SelectInfo)))
-    val allocateInfo = Output(UInt(entryNum.W))
+    val alloc = Output(Bool())
 
-    val enq = Input(Valid(new Bundle {
-      val addrOH = UInt(entryNum.W)
-      val data = new MicroOp
-    }))
+    val enq = Input(Valid(new MicroOp))
 
     val loadIssue = Input(Valid(UInt(entryNum.W)))
     val loadUop = Output(new MicroOp)
@@ -140,11 +137,9 @@ class MemoryReservationBank(entryNum:Int, stuNum:Int, wakeupWidth:Int, regWkpIdx
   io.staSelectInfo := statusArray.io.staSelectInfo
   io.stdSelectInfo := statusArray.io.stdSelectInfo
   io.lduSelectInfo := statusArray.io.lduSelectInfo
-  io.allocateInfo := statusArray.io.allocateInfo
+  io.alloc := statusArray.io.alloc
   statusArray.io.enq.valid := io.enq.valid
-  statusArray.io.enq.bits.addrOH := io.enq.bits.addrOH
-  statusArray.io.enq.bits.data := EnqToEntry(io.enq.bits.data)
-  ///todo
+  statusArray.io.enq.bits:= EnqToEntry(io.enq.bits)
   statusArray.io.staLduIssue.valid := io.loadIssue.valid || io.staIssue.valid || io.specialIssue.valid
   statusArray.io.stdIssue.valid := io.stdIssue.valid
   statusArray.io.stdHasIssue := io.stdHasIssue
@@ -159,8 +154,8 @@ class MemoryReservationBank(entryNum:Int, stuNum:Int, wakeupWidth:Int, regWkpIdx
   statusArray.io.stLastCompelet := io.stLastCompelet
 
   payloadArray.io.write.en := io.enq.valid
-  payloadArray.io.write.addr := io.enq.bits.addrOH
-  payloadArray.io.write.data := io.enq.bits.data
+  payloadArray.io.write.addr := statusArray.io.enqAddr
+  payloadArray.io.write.data := io.enq.bits
 
 //  payloadArray.io.read(0).addr := RegEnable(io.loadIssue.bits, io.auxLoadIssValid)
 //  payloadArray.io.read(1).addr := RegEnable(io.staIssue.bits, io.auxStaIssValid)

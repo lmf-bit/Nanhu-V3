@@ -95,6 +95,7 @@ class AtomicsReplayEntry(implicit p: Parameters) extends DCacheModule with HasPe
     pipe_req.word_idx  := get_word(req.addr)
     pipe_req.amo_data  := req.data
     pipe_req.amo_mask  := req.mask
+    pipe_req.id := 0.U(reqIdWidth.W)
 
     when (io.pipe_req.fire) {
       state := s_pipe_resp
