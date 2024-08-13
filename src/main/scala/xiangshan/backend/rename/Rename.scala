@@ -490,7 +490,8 @@ class Rename(implicit p: Parameters) extends XSModule  with HasCircularQueuePtrH
   val perfEvents = renamePerf ++ intFlPerf ++ fpFlPerf
   generatePerfEvent()
 
-  // bad speculation
+  // Top-Down
+  // Bad Speculation
   val debugRedirect = RegEnable(io.redirect.bits, io.redirect.valid)
   val recStall = io.redirect.valid || io.rabCommits.isWalk
   val ctrlRecStall = Mux(io.redirect.valid, io.redirect.bits.debugIsCtrl, io.rabCommits.isWalk && debugRedirect.debugIsCtrl)
@@ -500,12 +501,12 @@ class Rename(implicit p: Parameters) extends XSModule  with HasCircularQueuePtrH
   XSPerfAccumulate("control_recovery_stall", ctrlRecStall)
   XSPerfAccumulate("mem_violation_recovery_stall", mvioRecStall)
   XSPerfAccumulate("other_recovery_stall", otherRecStall)
-  // freelist stall
+  // Backend Bound: Freelist Stall
   private val inHeadValid = io.in.head.valid
   val notRecStall = !io.out.head.valid && !recStall
   val intFlStall = notRecStall && inHeadValid && fpFreeList.io.canAllocate && vtyperename.io.canAccept && !intFreeList.io.canAllocate
   val fpFlStall = notRecStall && inHeadValid && intFreeList.io.canAllocate && vtyperename.io.canAccept && !fpFreeList.io.canAllocate
-  val vtypeRenameStall = notRecStall && inHeadValid && intFreeList.io.canAllocate && fpFreeList.io.canAllocate && vtyperename.io.canAccept
+  val vtypeRenameStall = notRecStall && inHeadValid && intFreeList.io.canAllocate && fpFreeList.io.canAllocate && !vtyperename.io.canAccept
   val multiFlStall = notRecStall && inHeadValid && (PopCount(Cat(
     !intFreeList.io.canAllocate,
     !fpFreeList.io.canAllocate,

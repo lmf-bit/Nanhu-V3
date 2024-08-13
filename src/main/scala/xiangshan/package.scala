@@ -431,39 +431,50 @@ package object xiangshan {
     val OtherRedirectBubble = Value("OtherRedirectBubble")
     val FtqFullStall = Value("FtqFullStall")
 
-
     val BTBMissBubble = Value("BTBMissBubble")
     val FetchFragBubble = Value("FetchFragBubble")
 
     val SpecExecBubble = Value("SpecExecBubble")
     val BackendStall = Value("BackendStall")
 
-    // freelist full
-    val vtypeRenameStall = Value("vtypeRenameStall")
-    val FpFlStall = Value("FpFlStall")
-    val IntFlStall = Value("IntFlStall")
-    val MultiFlStall = Value("MultiFlStall")
+    /*  CtrlBlock Backend Bound:
+        1.Rename
+          Int PhyReg  -> IntFreeList
+          Fp PhyReg   -> FpFreeList
+          Vtype       -> VtypeRename
+          Rob         -> Rob full
+        2.Dispatch
+          IntDq       -> IntDq full
+          FpDq        -> FpDq full
+          MemDq       -> MemDq full
+    */
 
-    //DispatchQueue Full
-    val IntDqStall = Value("IntDqFullStall")
-    val FpDqStall = Value("FpDqFullStall")
-    val MemDqStall = Value("MemDqFullStall")
+    // PhyReg
+    val VtypeRenameStall  = Value("VtypeRenameStall")
+    val FpFlStall         = Value("FpFlStall")
+    val IntFlStall        = Value("IntFlStall")
+    val MultiFlStall      = Value("MultiFlStall")
 
-    //Rob Full
+    // Rob full
     val RobFullStall = Value("RobFullStall")
 
-    // Exu Stall
-    val AtomicExuStall = Value("AtomicStall")
-    val StoreExuStall = Value("StoreStall")
-    val LoadExuStall = Value("LoadStall")
-    val DivExuStall = Value("DivStall")
-    val IntExuStall = Value("IntStall")
-    val FpExuStall = Value("FpExuStall")
+    // DispatchQueue full
+    val IntDqStall  = Value("IntDqFullStall")
+    val FpDqStall   = Value("FpDqFullStall")
+    val MemDqStall  = Value("MemDqFullStall")
 
-    // bad speculation
-    val OtherRecoveryStall = Value("OtherRecoveryStall")
-    val MemVioRecoveryStall = Value("MemVioRecoveryStall")
-    val ControlRecoveryStall = Value("ControlRecoveryStall")
+    // Exu not ready
+    val AtomicExuStall  = Value("AtomicStall")
+    val StoreExuStall   = Value("StoreStall")
+    val LoadExuStall    = Value("LoadStall")
+    val FpExuStall      = Value("FpExuStall")
+    val IntExuStall     = Value("IntStall")
+    val DivExuStall     = Value("DivStall")
+
+    // Bad Speculation
+    val OtherRecoveryStall    = Value("OtherRecoveryStall")
+    val MemVioRecoveryStall   = Value("MemVioRecoveryStall")
+    val ControlRecoveryStall  = Value("ControlRecoveryStall")
 
     val OtherCoreStall = Value("OtherCoreStall")
     val NumStallReasons = Value("NumStallReasons")
@@ -482,8 +493,8 @@ package object xiangshan {
     val NumStage = Value("NumStage")
   }
   object CtrlBlkTopdownStage extends Enumeration {
-    val DECP = Value("DecodePipe") // 0
-    val REN_DIS = Value("RenameDispatch")   // 1
+    val DECP    = Value("DecodePipe")     // 0
+    val REN_DIS = Value("RenameDispatch") // 1
 
     val NumStage = Value("NumStage")
   }
