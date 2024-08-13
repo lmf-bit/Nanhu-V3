@@ -210,8 +210,6 @@ class ExecuteBlockImp(outer:ExecuteBlock) extends LazyModuleImp(outer)
   memRs.io.vectorAllocPregs := io.vectorAllocPregs
   memRs.io.stLastCompelet := memBlk.io.stIssuePtr
   memRs.io.ldStopMemRS := memBlk.io.ldStopMemBlock
-  memRs.io.fromMemBlkInfo.ldValidNum := memBlk.io.toMemRsInfo.ldValidNum
-  memRs.io.fromMemBlkInfo.replayQFreeNum := memBlk.io.toMemRsInfo.replayQFreeNum
   memRs.io.lduEarlyWakeUpIn := memBlk.io.lduEarlyWakeUp.map(_.wakeUp)
 
   vRs.io.redirect := Pipe(localRedirect)

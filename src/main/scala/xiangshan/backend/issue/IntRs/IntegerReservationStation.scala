@@ -291,7 +291,6 @@ class IntegerReservationStationImpl(outer:IntegerReservationStation, param:RsPar
       iss._1.rsIdx.bankIdxOH := issueDriver.io.deq.bits.bankIdxOH
       iss._1.rsIdx.entryIdxOH := issueDriver.io.deq.bits.entryIdxOH
       iss._1.hold := false.B
-      iss._1.hasFeedback := false.B
       iss._1.auxValid := issueDriver.io.deq.valid
       iss._1.specialPsrc := DontCare
       iss._1.specialPsrcType := DontCare

@@ -11,9 +11,6 @@ sealed class MemPipelineEnqBundle(chosenNum:Int, bankIdxWidth:Int, entryIdxWidth
   val selectResp = new SelectResp(bankIdxWidth, entryIdxWidth)
   val uop = new MicroOp
   val chosen = UInt(chosenNum.W)
-  val stdSel = UInt(bankIdxWidth.W)
-  val staSel = UInt(bankIdxWidth.W)
-  val loadSel = UInt(bankIdxWidth.W)
 }
 
 sealed class MemPipelineDeqBundle(chosenNum:Int, bankIdxWidth:Int, entryIdxWidth:Int)(implicit p: Parameters) extends Bundle{
@@ -22,15 +19,11 @@ sealed class MemPipelineDeqBundle(chosenNum:Int, bankIdxWidth:Int, entryIdxWidth
   val entryIdxOH: UInt = UInt(entryIdxWidth.W)
   val isFirstIssue: Bool = Bool()
   val chosen: UInt = UInt(chosenNum.W)
-  val stdSel: UInt = UInt(bankIdxWidth.W)
-  val staSel: UInt = UInt(bankIdxWidth.W)
-  val loadSel: UInt = UInt(bankIdxWidth.W)
 }
 
 class MemoryIssuePipelineBlock(chosenNum:Int,
                                bankIdxWidth:Int,
-                               entryIdxWidth:Int,
-                               earlyReleaseEntry: Boolean = false)(implicit p: Parameters) extends XSModule{
+                               entryIdxWidth:Int)(implicit p: Parameters) extends XSModule{
   val io = IO(new Bundle{
     val redirect = Input(Valid(new Redirect))
     val enq = Flipped(DecoupledIO(new MemPipelineEnqBundle(chosenNum, bankIdxWidth, entryIdxWidth)))
@@ -50,10 +43,6 @@ class MemoryIssuePipelineBlock(chosenNum:Int,
   private val deqValidDriverReg = RegInit(false.B)
   private val deqDataDriverReg = Reg(new SelectResp(bankIdxWidth, entryIdxWidth))
   private val deqChosenNumReg = Reg(UInt(chosenNum.W))
-  private val deqStaSel = Reg(UInt(bankIdxWidth.W))
-  private val deqStdSel = Reg(UInt(bankIdxWidth.W))
-  private val deqLoadSel = Reg(UInt(bankIdxWidth.W))
-
 
   private val shouldBeFlushed = deqDataDriverReg.info.robPtr.needFlush(io.redirect)
   private val shouldBeCanceled = deqDataDriverReg.info.lpv.zip(io.earlyWakeUpCancel).map({case(l,c) => l(0) && c}).reduce(_||_)
@@ -75,9 +64,6 @@ class MemoryIssuePipelineBlock(chosenNum:Int,
     deqValidDriverReg := true.B
     deqDataDriverReg := io.enq.bits.selectResp
     deqChosenNumReg := io.enq.bits.chosen
-    deqStaSel := io.enq.bits.staSel
-    deqStdSel := io.enq.bits.stdSel
-    deqLoadSel := io.enq.bits.loadSel
   }
 
 
@@ -100,9 +86,6 @@ class MemoryIssuePipelineBlock(chosenNum:Int,
   io.deq.bits.uop.cf.ftqPtr := deqDataDriverReg.info.ftqPtr
   io.deq.bits.uop.cf.ftqOffset := deqDataDriverReg.info.ftqOffset
   io.deq.bits.chosen  := DontCare
-  io.deq.bits.loadSel := DontCare
-  io.deq.bits.staSel  := DontCare
-  io.deq.bits.stdSel  := DontCare
 
   private val isVec = deqDataDriverReg.info.isVector
   private val isStd = deqDataDriverReg.info.fuType === FuType.std
