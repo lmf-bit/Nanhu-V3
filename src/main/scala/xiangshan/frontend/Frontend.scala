@@ -65,7 +65,7 @@ class FrontendImp (outer: Frontend) extends LazyModuleImp(outer)
       }
     }
     val topdown = new Bundle{
-      val reasonsOut = Output(Vec(TopDownCounters.NumStallReasons.id, Bool()))
+      val reasonsOut = Output(Vec(DecodeWidth, Vec(TopDownCounters.NumStallReasons.id, Bool())))
     }
   })
   //fence.i signals bundle not used, tie to default value
@@ -248,7 +248,23 @@ class FrontendImp (outer: Frontend) extends LazyModuleImp(outer)
     topdown_stages(FrontendTopdownStage.BP1.id).reasons(TopDownCounters.FtqFullStall.id) := true.B
   }
 
-  io.topdown.reasonsOut := topdown_stages(FrontendTopdownStage.IBF.id).reasons
+//  io.topdown.reasonsOut := topdown_stages(FrontendTopdownStage.IBF.id).reasons
+
+  for (i <- 0 until DecodeWidth) {
+    io.topdown.reasonsOut(i) := topdown_stages(FrontendTopdownStage.IBF.id).reasons
+
+    when(!(wasteCount === DecodeWidth.U || topdown_stages.last.asUInt.orR)) {
+      when(i.U < wasteCount) {
+        io.topdown.reasonsOut(DecodeWidth - i - 1)(TopDownCounters.FetchFragBubble.id.U) := true.B
+      }
+    }
+
+    when(!io.backend.cfVec(i).ready) {
+      io.topdown.reasonsOut(i)(TopDownCounters.BackendStall.id.U) := true.B
+    }
+  }
+
+  // Frontend local statistics
   val matchBubble = Wire(UInt(log2Up(TopDownCounters.NumStallReasons.id).W))
   matchBubble := (TopDownCounters.NumStallReasons.id - 1).U - PriorityEncoder(topdown_stages.last.reasons.reverse)
 

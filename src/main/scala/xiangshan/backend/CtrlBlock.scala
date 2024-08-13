@@ -110,7 +110,7 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
     val vecFaultOnlyFirst = Output(ValidIO(new ExuOutput))
 
     val topdown = new Bundle{
-      val reasonsIn  = Input(Vec(TopDownCounters.NumStallReasons.id, Bool()))
+      val reasonsIn = Input(Vec(DecodeWidth, Vec(TopDownCounters.NumStallReasons.id, Bool())))
     }
   })
   require(outer.dispatchNode.out.count(_._2._1.isIntRs) == 1)
@@ -512,7 +512,7 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
   )))
 
   // Top-down reasoning is passed down stage by stage along the pipeline
-  topdown_stages(CtrlBlkTopdownStage.DECP.id).foreach{_.reasons := io.topdown.reasonsIn}
+  topdown_stages(CtrlBlkTopdownStage.DECP.id).zip(io.topdown.reasonsIn).foreach { case (stage, in) => stage.reasons := in }
   for (i <- 0 until CtrlBlkTopdownStage.NumStage.id - 1) {
     topdown_stages(i + 1) := topdown_stages(i)
   }
@@ -592,10 +592,27 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
   topdown_stages(CtrlBlkTopdownStage.REN_DIS.id).foreach(_.reasons(TopDownCounters.FpExuStall.id)           := robHeadIsFp)
 
   val stallReasons = Wire(Vec(RenameWidth, UInt(log2Up(TopDownCounters.NumStallReasons.id).W)))
-  stallReasons.zip(rename.io.in.map(_.fire)).zipWithIndex.foreach {
-    case ((reason, fire), i) => {
-      reason := (TopDownCounters.NumStallReasons.id - 1).U - PriorityEncoder(topdown_stages(CtrlBlkTopdownStage.REN_DIS.id)(i).reasons.reverse)
-    }
+  val firedVec = rename.io.out.map(_.fire)
+  stallReasons.zip(topdown_stages.last).zip(firedVec).foreach { case ((update, in), fire) =>
+    val reasonIn = (TopDownCounters.NumStallReasons.id - 1).U - PriorityEncoder(in.reasons.reverse)
+    import TopDownCounters._
+    update := MuxCase(OtherCoreStall.id.U, Seq(
+      // fire
+      fire -> NoStall.id.U,
+      // dispatch not stall / core stall from decode or rename
+      (reasonIn =/= OtherCoreStall.id.U && reasonIn =/= NoStall.id.U) -> reasonIn,
+      // dispatch queue stall
+      (!robHeadIsInt && !rob.io.robFull && !intDq.io.enq.canAccept) -> IntDqStall.id.U,
+      (!robHeadIsFp && !rob.io.robFull && !fpDq.io.enq.canAccept) -> FpDqStall.id.U,
+      (!robHeadIsMem && !rob.io.robFull && !lsDq.io.enq.canAccept) -> MemDqStall.id.U,
+      // rob stall
+      robHeadIsAmo -> AtomicExuStall.id.U,
+      robHeadIsStore -> StoreExuStall.id.U,
+      robHeadIsLoad -> LoadExuStall.id.U,
+      robHeadIsDiv -> DivExuStall.id.U,
+      (robHeadIsInt && !robHeadIsDiv) -> IntExuStall.id.U,
+      robHeadIsFp -> FpExuStall.id.U,
+    ))
   }
 
   TopDownCounters.values.foreach(ctr => XSPerfAccumulate(ctr.toString(), PopCount(stallReasons.map(_ === ctr.id.U))))
