@@ -39,7 +39,23 @@ object FuConfigs{
     writeVxsat = false,
     latency = 0,
     trigger = false,
-    hasRedirect = true
+    hasRedirect = false
+  )
+  val bruCfg = FuConfig(
+    name = "bru",
+    fuType = FuType.bru, //TODO
+    numIntSrc = 2,
+    numFpSrc = 0,
+    numVecSrc = 0,
+    writeIntRf = false,
+    writeFpRf = false,
+    writeVecRf = false,
+    writeFflags = false,
+    writeVxsat = false,
+    latency = 0,
+    hasRedirect = true,
+    trigger = false,
+    exceptionOut = Seq(illegalInstr)
   )
   val mulCfg = FuConfig(
     name = "mul",

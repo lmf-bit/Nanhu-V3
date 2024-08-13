@@ -24,7 +24,7 @@ import chisel3.util._
 import xiangshan.ExceptionNO.fdiUJumpFault
 import xiangshan.backend.execute.fu.csr.{CSR, CSRFileIO, CSROpType}
 import xiangshan.backend.execute.fu.fence.{SfenceBundle, _}
-import xiangshan.backend.execute.fu.jmp._
+import xiangshan.backend.execute.fu._
 import xiangshan.backend.execute.fu.{FUWithRedirect, FuConfigs, FunctionUnit, FDICallJumpExcpIO}
 import xiangshan._
 import xs.utils.{DelayN, ParallelMux}
@@ -33,6 +33,54 @@ class FenceIO(implicit p: Parameters) extends XSBundle {
   val sfence = Output(new SfenceBundle)
   val fencei = new FenceIBundle
   val sbuffer = new FenceToSbuffer
+}
+
+class FakeMou()(implicit p:Parameters) extends FunctionUnit(p(XSCoreParamsKey).XLEN) {
+  val issueToMou = IO(Decoupled(new ExuInput))
+  val writebackFromMou = IO(Flipped(Decoupled(new ExuOutput)))
+  io.in.ready := issueToMou.ready
+  issueToMou.valid := io.in.valid
+  issueToMou.bits.src := io.in.bits.src
+  issueToMou.bits.uop := io.in.bits.uop
+  issueToMou.bits.vm := DontCare
+  io.out.valid := writebackFromMou.valid
+  io.out.bits := writebackFromMou.bits
+  writebackFromMou.ready := io.out.ready
+}
+
+class FakeCSR()(implicit p:Parameters) extends FUWithRedirect {
+  val connectWithCSR = IO(new Bundle {
+    val fuIn = DecoupledIO(new FuInput(XLEN))
+    val redirect = Flipped(ValidIO(new Redirect))
+    val fuOut = Flipped(DecoupledIO(new FuOutput(XLEN)))
+  })
+  connectWithCSR.fuIn.valid := io.in.valid
+  io.in.ready := connectWithCSR.fuIn.ready
+  connectWithCSR.fuIn.bits := io.in.bits
+  
+  io.out <> connectWithCSR.fuOut
+
+  redirectOutValid := connectWithCSR.redirect.valid
+  redirectOut := connectWithCSR.redirect.bits
+}
+
+class FakeFence()(implicit p:Parameters) extends FUWithRedirect {
+  val connectWithFence = IO(new Bundle {
+    val fuIn = DecoupledIO(new FuInput(XLEN))
+    val redirect = Flipped(ValidIO(new Redirect))
+    val fuOut = Flipped(DecoupledIO(new FuOutput(XLEN)))
+  })
+
+  connectWithFence.fuIn.valid := io.in.valid
+  io.in.ready := connectWithFence.fuIn.ready
+  connectWithFence.fuIn.bits := io.in.bits
+
+  io.out.valid := connectWithFence.fuOut.valid
+  connectWithFence.fuOut.ready := io.out.ready
+  io.out.bits := connectWithFence.fuOut.bits
+
+  redirectOutValid := connectWithFence.redirect.valid
+  redirectOut := connectWithFence.redirect.bits
 }
 
 class MiscExu (id:Int, complexName:String, val bypassInNum:Int)(implicit p:Parameters) extends BasicExu{
@@ -49,36 +97,32 @@ class MiscExu (id:Int, complexName:String, val bypassInNum:Int)(implicit p:Param
   val writebackNode = new ExuOutputNode(cfg)
   override lazy val module = new MiscExuImpl(this, cfg)
 }
-class FakeMou()(implicit p:Parameters) extends FunctionUnit(p(XSCoreParamsKey).XLEN) {
-  val issueToMou = IO(Decoupled(new ExuInput))
-  val writebackFromMou = IO(Flipped(Decoupled(new ExuOutput)))
-  io.in.ready := issueToMou.ready
-  issueToMou.valid := io.in.valid
-  issueToMou.bits.src := io.in.bits.src
-  issueToMou.bits.uop := io.in.bits.uop
-  issueToMou.bits.vm := DontCare
-  io.out.valid := writebackFromMou.valid
-  io.out.bits := writebackFromMou.bits
-  writebackFromMou.ready := io.out.ready
-}
 
 class MiscExuImpl(outer:MiscExu, exuCfg:ExuConfig)(implicit p:Parameters) extends BasicExuImpl(outer) {
   val io = IO(new Bundle{
     val bypassIn = Input(Vec(outer.bypassInNum, Valid(new ExuOutput)))
+
     val issueToMou = Decoupled(new ExuInput)
     val writebackFromMou = Flipped(Decoupled(new ExuOutput))
-    val fenceio = new FenceIO
-    val csrio = new CSRFileIO
-    val fdicallJumpExcpIO = Flipped(new FDICallJumpExcpIO)
+
+    val issueToFence = DecoupledIO(new FuInput(p(XSCoreParamsKey).XLEN))
+    val writebackFromFence = Flipped(DecoupledIO(new FuOutput(p(XSCoreParamsKey).XLEN)))
+    val redirectFromFence = Flipped(ValidIO(new Redirect))
+
+    val issueToCSR = DecoupledIO(new FuInput(p(XSCoreParamsKey).XLEN))
+    val writebackFromCSR = Flipped(DecoupledIO(new FuOutput(p(XSCoreParamsKey).XLEN)))
+    val redirectFromCSR = Flipped(ValidIO(new Redirect))
+    val csrIsPerfCnt = Input(Bool())
   })
   private val issuePort = outer.issueNode.in.head._1
   private val writebackPort = outer.writebackNode.out.head._1
-  private val fence = Module(new Fence)
+  private val fence = Module(new FakeFence)
   private val mou = Module(new FakeMou)
-  private val csr = Module(new CSR)
+  private val csr = Module(new FakeCSR)
 
   issuePort.issue.ready := true.B
 
+  println("misc's bypassNum = " + outer.bypassInNum)
   private val finalIssueSignals = bypassSigGen(io.bypassIn, issuePort, outer.bypassInNum > 0)
   private val fuSeq = Seq(fence, mou, csr)
   fuSeq.zip(exuCfg.fuConfigs).foreach({ case (m, cfg) =>
@@ -87,26 +131,7 @@ class MiscExuImpl(outer:MiscExu, exuCfg:ExuConfig)(implicit p:Parameters) extend
     m.io.in.bits.uop := finalIssueSignals.bits.uop
     m.io.in.bits.src := finalIssueSignals.bits.src
     m.io.out.ready := true.B
-
-    val isCsr = finalIssueSignals.bits.uop.ctrl.fuType === FuType.csr
-    val isExclusive = finalIssueSignals.bits.uop.ctrl.noSpecExec && finalIssueSignals.bits.uop.ctrl.blockBackward
-    val isFDICall = RegNext(io.fdicallJumpExcpIO.isFDICall, false.B)
-    when(m.io.in.valid){
-      assert(m.io.in.ready)
-      assert(isCsr || isExclusive || isFDICall)
-    }
   })
-
-  // FDICALL.JR will write FDIReturnPC CSR
-  private val fdicallValid     = RegNext(io.fdicallJumpExcpIO.isFDICall, false.B)
-  private val fdicallTargetReg = RegEnable(io.fdicallJumpExcpIO.target, io.fdicallJumpExcpIO.isFDICall)
-  when (fdicallValid) {
-    csr.io.in.valid := true.B
-    csr.io.in.bits.src(0) := fdicallTargetReg
-    csr.io.in.bits.uop.ctrl.rfWen := false.B
-    csr.io.in.bits.uop.ctrl.imm := csr.Fdireturnpc.U
-    csr.io.in.bits.uop.ctrl.fuOpType := CSROpType.wrt
-  }
 
   private val fuOut = fuSeq.map(_.io.out)
   private val outSel = fuOut.map(_.fire)
@@ -121,30 +146,22 @@ class MiscExuImpl(outer:MiscExu, exuCfg:ExuConfig)(implicit p:Parameters) extend
 
   assert(PopCount(outSel) === 1.U || PopCount(outSel) === 0.U)
 
-  io.issueToMou <> mou.issueToMou
-  io.writebackFromMou <> mou.writebackFromMou
-
   writebackPort.bits.fflags := DontCare
   writebackPort.bits.redirect := Mux(csr.redirectOutValid, csr.redirectOut, fence.redirectOut)
   writebackPort.bits.redirectValid := csr.redirectOutValid || fence.redirectOutValid
   writebackPort.bits.debug.isMMIO := false.B
-  writebackPort.bits.debug.isPerfCnt := csr.csrio.isPerfCnt
+  writebackPort.bits.debug.isPerfCnt := io.csrIsPerfCnt
   writebackPort.bits.debug.paddr := 0.U
   writebackPort.bits.debug.vaddr := 0.U
 
-  io.fenceio.sfence := fence.sfence
-  io.fenceio.fencei <> fence.fencei
-  io.fenceio.sbuffer <> fence.toSbuffer
-  fence.toSbuffer.sbIsEmpty := io.fenceio.sbuffer.sbIsEmpty
-  fence.disableSfence := csr.csrio.disableSfence
-  fence.priviledgeMode := csr.csrio.priviledgeMode
-  csr.csrio <> io.csrio
-  csr.csrio.vcsr.robWb.vxsat := io.csrio.vcsr.robWb.vxsat
-  csr.csrio.vcsr.robWb.vstart := io.csrio.vcsr.robWb.vstart
-  io.csrio.vcsr.vtype.vtypeRead.readEn := RegNext(csr.csrio.vcsr.vtype.vtypeRead.readEn, false.B)
-  io.csrio.vcsr.vtype.vlRead.readEn := RegNext(csr.csrio.vcsr.vtype.vlRead.readEn, false.B)
-  csr.csrio.vcsr.vtype.vlUpdate := Pipe(io.csrio.vcsr.vtype.vlUpdate)
-  io.csrio.tlb := DelayN(csr.csrio.tlb, 2)
-  io.csrio.customCtrl := DelayN(csr.csrio.customCtrl, 2)
-  csr.csrio.exception := Pipe(io.csrio.exception)
+  io.issueToMou <> mou.issueToMou
+  io.writebackFromMou <> mou.writebackFromMou
+
+  io.issueToFence <> fence.connectWithFence.fuIn
+  fence.connectWithFence.fuOut <> io.writebackFromFence
+  fence.connectWithFence.redirect := io.redirectFromFence
+
+  io.issueToCSR <> csr.connectWithCSR.fuIn
+  csr.connectWithCSR.fuOut <> io.writebackFromCSR
+  csr.connectWithCSR.redirect := io.redirectFromCSR
 }
