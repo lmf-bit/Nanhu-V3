@@ -1063,7 +1063,7 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
       for (fuType <- FuType.functionNameMap.keys) {
       val fuName = FuType.functionNameMap(fuType)
       val firstInvalidCommitUop = PriorityMux(io.commits.commitValid.map(v => !v), commitDebugUop)
-      commitFutype := firstInvalidCommitUop.ctrl.fuType === fuType.U
+      commitFutype := firstInvalidCommitUop.ctrl.fuType
       blkIsCompress := firstInvalidCommitUop.compressInstNum =/= 1.U
       XSPerfAccumulate(s"commitInstrBlockBy_${fuName}_instr_cnt", commitFutype === fuType.U )
       }
