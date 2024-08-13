@@ -78,7 +78,6 @@ class TLBFA(
       }
       isSuperPage(i) := ParallelMux(hitVecReg zip entries.map(_.isSuperPage()))
     }
-    io.r.resp_hit_sameCycle(i) := Cat(hitVec).orR
 
     access.sets := get_set_idx(vpn_reg(vpn_reg.getWidth-1, sectorTlbWidth), nSets) // no use
     access.touch_ways.valid := resp.valid && Cat(hitVecReg).orR

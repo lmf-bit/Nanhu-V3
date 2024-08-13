@@ -133,6 +133,7 @@ package object issue {
     val auxValid = Output(Bool())
     val isFirstIssue = Output(Bool())
     val hold = Output(Bool())
+    val hasFeedback = Output(Bool())
     val specialPsrc = Output(UInt(PhyRegIdxWidth.W))
     val specialPsrcType = Output(SrcType())
     val specialPsrcRen = Output(Bool())

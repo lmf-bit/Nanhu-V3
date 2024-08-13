@@ -55,7 +55,7 @@ case class XSCoreParameters
   VAddrBits: Int = 39,
   HasFPU: Boolean = true,
   HasCustomCSRCacheOp: Boolean = true,
-  FetchWidth: Int = 8,
+  FetchWidth: Int = 6,
   AsidLength: Int = 16,
   EnableBPU: Boolean = true,
   EnableBPD: Boolean = true,
@@ -128,6 +128,7 @@ case class XSCoreParameters
       (preds, ras.io.out)
     }),
   IBufSize: Int = 48,
+  IBufNBank: Int = 4,
   DecodeWidth: Int = 4,
   RenameWidth: Int = 4,
   CommitWidth: Int = 6,
@@ -164,12 +165,12 @@ case class XSCoreParameters
   EnableAccurateLoadError: Boolean = true,
   MMUAsidLen: Int = 16, // max is 16, 0 is not supported now
   UseOneDtlb: Boolean = false,
+  itlbPortNum: Int = ICacheParameters().PortNumber + 1,
+  ipmpPortNum: Int = 2 * ICacheParameters().PortNumber + 1,
   itlbParameters: TLBParameters = TLBParameters(
     name = "itlb",
     fetchi = true,
     useDmode = false,
-    sameCycle = false,
-    missSameCycle = true,
     nWays = 48,
     replacer = Some("plru"),
     shouldBlock = true
@@ -207,13 +208,9 @@ case class XSCoreParameters
   l2tlbParameters: L2TLBParameters = L2TLBParameters(),
   NumPerfCounters: Int = 16,
   icacheParameters: ICacheParameters = ICacheParameters(
-    tagECC = None,
-    dataECC = None,
+    tagECC = Some("parity"),
+    dataECC = Some("parity"),
     replacer = Some("setplru"),
-    nMissEntries = 2,
-    nProbeEntries = 2,
-    nPrefetchEntries = 2,
-    hasPrefetch = false,
   ),
   dcacheParametersOpt: Option[DCacheParameters] = Some(DCacheParameters(
     tagECC = Some("secded"),
@@ -333,6 +330,7 @@ trait HasXSParameter {
   val CacheLineHalfWord = CacheLineSize / 16
   val ExtHistoryLength = HistoryLength + 64
   val IBufSize = coreParams.IBufSize
+  val IBufNBank = coreParams.IBufNBank
   val DecodeWidth = coreParams.DecodeWidth
   val RenameWidth = coreParams.RenameWidth
   val CommitWidth = coreParams.CommitWidth

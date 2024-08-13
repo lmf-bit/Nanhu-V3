@@ -267,7 +267,12 @@ class MemoryStatusArrayEntryUpdateNetwork(stuNum:Int, wakeupWidth:Int, regWkpIdx
       }
     }
     is(s_wait_cancel) {
-      staLoadStateNext := Mux(addrShouldBeCancelled, s_ready, s_wait_replay)
+      when(issueHit){
+        staLoadStateNext := s_issued
+      }.otherwise{
+        staLoadStateNext := Mux(addrShouldBeCancelled, s_ready, s_wait_replay)
+      }
+      assert(!(addrShouldBeCancelled && issueHit))
     }
     is(s_wait_replay) {
       when(issueHit){
@@ -360,7 +365,13 @@ class MemoryStatusArrayEntryUpdateNetwork(stuNum:Int, wakeupWidth:Int, regWkpIdx
   io.entryNext := Mux(enqUpdateEn, enqNext, miscNext)
 }
 
-class MemoryStatusArray(entryNum:Int, stuNum:Int, wakeupWidth:Int, regWkpIdx:Seq[Int], fpWkpIdx:Seq[Int], vecWkpIdx:Seq[Int])(implicit p: Parameters) extends XSModule{
+class MemoryStatusArray(entryNum:Int,
+                        stuNum:Int,
+                        wakeupWidth:Int,
+                        regWkpIdx:Seq[Int],
+                        fpWkpIdx:Seq[Int],
+                        vecWkpIdx:Seq[Int],
+                        replayPortNum:Int)(implicit p: Parameters) extends XSModule{
   val io = IO(new Bundle{
     val redirect = Input(Valid(new Redirect))
 
@@ -378,7 +389,7 @@ class MemoryStatusArray(entryNum:Int, stuNum:Int, wakeupWidth:Int, regWkpIdx:Seq
     val wakeups = Input(Vec(wakeupWidth, Valid(new WakeUpInfo)))
     val loadEarlyWakeup = Input(Vec(loadUnitNum, Valid(new EarlyWakeUpInfo)))
     val earlyWakeUpCancel = Input(Vec(loadUnitNum, Bool()))
-    val replay = Input(Vec(4, Valid(new Replay(entryNum))))
+    val replay = Input(Vec(replayPortNum, Valid(new Replay(entryNum))))
     val stIssued = Input(Vec(stuNum, Valid(new RobPtr)))
     val stLastCompelet = Input(new SqPtr)
     val stdHasIssue = Input(Vec(2, Valid(UInt(entryNum.W))))

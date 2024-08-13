@@ -237,7 +237,8 @@ class LoadReplayQueue(enablePerf: Boolean)(implicit p: Parameters) extends XSMod
     val robHead = Input(new RobPtr)
     val mmioReq = new UncacheWordIO
     val mmioWb = DecoupledIO(new ExuOutput)
-    val mmioPaddr = UInt(PAddrBits.W)
+    val mmioPaddr = Output(UInt(PAddrBits.W))
+    val freeNum = Output(UInt(log2Up(LoadReplayQueueSize).W))
   })
 
   private val counterRegMax = 1024
@@ -259,7 +260,7 @@ class LoadReplayQueue(enablePerf: Boolean)(implicit p: Parameters) extends XSMod
   val mmioReg = RegInit(VecInit(List.fill(LoadReplayQueueSize)(false.B)))
   // replay penalty, prevent dead block
   val penaltyReg = RegInit(VecInit(List.fill(LoadReplayQueueSize)(0.U(penaltyRegWidth.W))))
-  val counterReg = RegInit(VecInit(List.fill(LoadReplayQueueSize)(0.U(log2Up(counterRegMax).W))))
+  val counterReg = RegInit(VecInit(List.fill(LoadReplayQueueSize)(0.U((log2Up(counterRegMax) + 1).W))))
   // hintIDReg: store the Hint ID of TLB miss or Dcache miss
   val hintIDReg = RegInit(VecInit(List.fill(LoadReplayQueueSize)(0.U(reqIdWidth.W))))
   // mshrIDreg: store the L1 MissQ mshr ID
@@ -350,7 +351,7 @@ class LoadReplayQueue(enablePerf: Boolean)(implicit p: Parameters) extends XSMod
 
   // replayQueue Full Backpressure Logic
   val lqFull = freeList.io.empty
-  val lqFreeNums = freeList.io.validCount
+  io.freeNum := LoadReplayQueueSize.U - freeList.io.validCount
   io.replayQFull := lqFull
 
   // enq req control

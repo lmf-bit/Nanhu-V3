@@ -1,0 +1,41 @@
+# This file describes the GitHub Actions workflow for continuous integration of XS Core.
+name: Frontend Test
+
+on:
+  push:
+    branches: [ frontend ]
+  pull_request:
+    branches: [ frontend ]
+
+jobs:
+  frontend-test:
+    runs-on: self-hosted
+    continue-on-error: false
+    name: Frontend Test
+    env:
+      http_proxy: http://172.58.2.227:7890
+      https_proxy: http://172.58.2.227:7890
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          proxy: http://172.58.2.227:7890
+          submodules: 'recursive'
+      - name: Set env
+        run: |
+          export HEAD_SHA=${{ github.run_number }}
+      - name: Build EMU
+        run: |
+          export NOOP_HOME=`pwd`
+          make emu_rtl -j32
+      - name: Basic Test - coremark
+        run: |
+          make emu_rtl-run RUN_BIN=coremark-3-iteration.bin
+          grep "Bp" sim/emu/coremark-3-iteration.bin/assert.log | awk -F ':' '{print $2}'| sort
+      - name: Basic Test - dhrystone
+        run: |
+          make emu_rtl-run RUN_BIN=dhrystone.bin
+          grep "Bp" sim/emu/dhrystone.bin/assert.log | awk -F ':' '{print $2}'| sort
+      - name: Linux Test
+        run: |
+          make emu_rtl-run RUN_BIN=linux.bin
+          grep "Bp" sim/emu/linux.bin/assert.log | awk -F ':' '{print $2}'| sort

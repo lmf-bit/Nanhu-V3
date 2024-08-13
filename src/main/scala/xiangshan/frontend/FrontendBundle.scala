@@ -36,9 +36,9 @@ class FetchRequestBundle(implicit p: Parameters) extends XSBundle with HasICache
   val ftqIdx          = new FtqPtr
   val ftqOffset       = ValidUndirectioned(UInt(log2Ceil(PredictWidth).W))
 
-  def crossCacheline =  startAddr(blockOffBits - 1) === 1.U
+  def crossCacheline =  startAddr(blockOffBits-1, blockOffBits-3) >= 5.U(3.W)
 
-  def fromFtqPcBundle(b: Ftq_RF_Components) = {
+  def fromFtqPcBundle(b: FtqPCEntry) = {
     this.startAddr := b.startAddr
     this.nextlineStart := b.nextLineAddr
     when (b.fallThruError) {
@@ -63,8 +63,9 @@ class FetchRequestBundle(implicit p: Parameters) extends XSBundle with HasICache
 class FtqICacheInfo(implicit p: Parameters)extends XSBundle with HasICacheParameters{
   val startAddr           = UInt(VAddrBits.W)
   val nextlineStart       = UInt(VAddrBits.W)
-  def crossCacheline =  startAddr(blockOffBits - 1) === 1.U
-  def fromFtqPcBundle(b: Ftq_RF_Components) = {
+  val ftqIdx              = new FtqPtr
+  def crossCacheline =  startAddr(blockOffBits-1, blockOffBits-3) >= 5.U(3.W)
+  def fromFtqPcBundle(b: FtqPCEntry) = {
     this.startAddr := b.startAddr
     this.nextlineStart := b.nextLineAddr
     this
@@ -92,15 +93,6 @@ class PredecodeWritebackBundle(implicit p:Parameters) extends XSBundle {
   val target       = UInt(VAddrBits.W)
   val jalTarget    = UInt(VAddrBits.W)
   val instrRange   = Vec(PredictWidth, Bool())
-}
-
-// Ftq send req to Prefetch
-class PrefetchRequest(implicit p:Parameters) extends XSBundle {
-  val target          = UInt(VAddrBits.W)
-}
-
-class FtqPrefechBundle(implicit p:Parameters) extends XSBundle {
-  val req = DecoupledIO(new PrefetchRequest)
 }
 
 class mmioCommitRead(implicit p: Parameters) extends XSBundle {
@@ -132,7 +124,7 @@ class FetchToIBuffer(implicit p: Parameters) extends XSBundle {
 // }
 // Move from BPU
 abstract class GlobalHistory(implicit p: Parameters) extends XSBundle with HasBPUConst {
-  def update(br_valids: Vec[Bool], real_taken_mask: Vec[Bool]): GlobalHistory
+  def update(brValid: Vec[Bool], real_taken_mask: Vec[Bool]): GlobalHistory
 }
 
 class ShiftingGlobalHistory(implicit p: Parameters) extends GlobalHistory {
@@ -144,11 +136,11 @@ class ShiftingGlobalHistory(implicit p: Parameters) extends GlobalHistory {
     g
   }
 
-  def update(br_valids: Vec[Bool], real_taken_mask: Vec[Bool]): ShiftingGlobalHistory = {
-    require(br_valids.length == numBr)
+  def update(brValid: Vec[Bool], real_taken_mask: Vec[Bool]): ShiftingGlobalHistory = {
+    require(brValid.length == numBr)
     require(real_taken_mask.length == numBr)
     val last_valid_idx = PriorityMux(
-      br_valids.reverse :+ true.B,
+      brValid.reverse :+ true.B,
       (numBr to 0 by -1).map(_.U(log2Ceil(numBr+1).W))
     )
     val first_taken_idx = PriorityEncoder(false.B +: real_taken_mask)
@@ -192,7 +184,7 @@ object CGHPtr {
 class CircularGlobalHistory(implicit p: Parameters) extends GlobalHistory {
   val buffer = Vec(HistoryLength, Bool())
   type HistPtr = UInt
-  def update(br_valids: Vec[Bool], real_taken_mask: Vec[Bool]): CircularGlobalHistory = {
+  def update(brValid: Vec[Bool], real_taken_mask: Vec[Bool]): CircularGlobalHistory = {
     this
   }
 }
@@ -203,7 +195,7 @@ class FoldedHistory(val len: Int, val compLen: Int, val max_update_num: Int)(imp
   require(len > 0)
   // require(folded_len <= len)
   require(compLen >= max_update_num)
-  val folded_hist = UInt(compLen.W)
+  val foldedHist = UInt(compLen.W)
 
   def need_oldest_bits = len > compLen
   def info = (len, compLen)
@@ -236,18 +228,15 @@ class FoldedHistory(val len: Int, val compLen: Int, val max_update_num: Int)(imp
     // do xors for several bitsets at specified bits
     def bitsets_xor(len: Int, bitsets: Seq[Seq[Tuple2[Int, Bool]]]) = {
       val res = Wire(Vec(len, Bool()))
-      // println(f"num bitsets: ${bitsets.length}")
-      // println(f"bitsets $bitsets")
+
       val resArr = Array.fill(len)(List[Bool]())
       for (bs <- bitsets) {
         for ((n, b) <- bs) {
           resArr(n) = b :: resArr(n)
         }
       }
-      // println(f"${resArr.mkString}")
-      // println(f"histLen: ${this.len}, foldedLen: $folded_len")
+
       for (i <- 0 until len) {
-        // println(f"bit[$i], ${resArr(i).mkString}")
         if (resArr(i).length > 2) {
           println(f"[warning] update logic of foldest history has two or more levels of xor gates! " +
             f"histlen:${this.len}, compLen:$compLen, at bit $i")
@@ -269,17 +258,15 @@ class FoldedHistory(val len: Int, val compLen: Int, val max_update_num: Int)(imp
       }
       // if a bit does not wrap around, it should not be xored when it exits
       val oldest_bits_set = (0 until max_update_num).filter(oldest_bit_wrap_around).map(i => (oldest_bit_pos_in_folded(i), oldest_bits_masked(i)))
-      
-      // println(f"old bits pos ${oldest_bits_set.map(_._1)}")
+
   
       // only the last bit could be 1, as we have at most one taken branch at a time
-      val newest_bits_masked = VecInit((0 until max_update_num).map(i => taken && ((i+1) == num).B)).asUInt
+      val newest_bits_masked = VecInit((0 until max_update_num).map(i => taken && ((i + 1) == num).B)).asUInt
       // if a bit does not wrap around, newest bits should not be xored onto it either
       val newest_bits_set = (0 until max_update_num).map(i => (compLen-1-i, newest_bits_masked(i)))
   
-      // println(f"new bits set ${newest_bits_set.map(_._1)}")
-      //
-      val original_bits_masked = VecInit(folded_hist.asBools.zipWithIndex.map{
+
+      val original_bits_masked = VecInit(foldedHist.asBools.zipWithIndex.map{
         case (fb, i) => fb && !(num >= (len-i)).B
       })
       val original_bits_set = (0 until compLen).map(i => (i, original_bits_masked(i)))
@@ -289,11 +276,11 @@ class FoldedHistory(val len: Int, val compLen: Int, val max_update_num: Int)(imp
       circular_shift_left(xored, num)
     } else {
       // histLen too short to wrap around
-      ((folded_hist << num) | taken)(compLen-1,0)
+      ((foldedHist << num).asUInt | taken)(compLen-1,0)
     }
 
     val fh = WireInit(this)
-    fh.folded_hist := new_folded_hist
+    fh.foldedHist := new_folded_hist
     fh
   }
 }
@@ -304,31 +291,31 @@ class AheadFoldedHistoryOldestBits(val len: Int, val max_update_num: Int)(implic
   def getRealOb(brNumOH: UInt): Vec[Bool] = {
     val ob = Wire(Vec(max_update_num, Bool()))
     for (i <- 0 until max_update_num) {
-      ob(i) := Mux1H(brNumOH, bits.drop(i).take(numBr+1))
+      ob(i) := Mux1H(brNumOH, bits.slice(i, i + numBr + 1))
     }
     ob
   }
 }
 
-class AllAheadFoldedHistoryOldestBits(val gen: Seq[Tuple2[Int, Int]])(implicit p: Parameters) extends XSBundle with HasBPUConst {
+class AllAheadFoldedHistoryOldestBits(val gen: Seq[(Int, Int)])(implicit p: Parameters) extends XSBundle with HasBPUConst {
   val afhob = MixedVec(gen.filter(t => t._1 > t._2).map{_._1}
     .toSet.toList.map(l => new AheadFoldedHistoryOldestBits(l, numBr))) // remove duplicates
   require(gen.toSet.toList.equals(gen))
-  def getObWithInfo(info: Tuple2[Int, Int]) = {
+  def getObWithInfo(info: (Int, Int)): AheadFoldedHistoryOldestBits = {
     val selected = afhob.filter(_.len == info._1)
     require(selected.length == 1)
-    selected(0)
+    selected.head
   }
-  def read(ghv: Vec[Bool], ptr: CGHPtr) = {
+  def read(ghv: Vec[Bool], ptr: CGHPtr): Unit = {
     val hisLens = afhob.map(_.len)
     val bitsToRead = hisLens.flatMap(l => (0 until numBr*2).map(i => l-i-1)).toSet // remove duplicates
-    val bitsWithInfo = bitsToRead.map(pos => (pos, ghv((ptr+(pos+1).U).value)))
+    val bitsWithInfo = bitsToRead.map(pos => (pos, ghv((ptr + (pos + 1).U).value)))
     for (ob <- afhob) {
       for (i <- 0 until numBr*2) {
         val pos = ob.len - i - 1
         val bit_found = bitsWithInfo.filter(_._1 == pos).toList
         require(bit_found.length == 1)
-        ob.bits(i) := bit_found(0)._2
+        ob.bits(i) := bit_found.head._2
       }
     }
   }
@@ -336,19 +323,14 @@ class AllAheadFoldedHistoryOldestBits(val gen: Seq[Tuple2[Int, Int]])(implicit p
 
 class AllFoldedHistories(val gen: Seq[Tuple2[Int, Int]])(implicit p: Parameters) extends XSBundle with HasBPUConst {
   val hist = MixedVec(gen.map{case (l, cl) => new FoldedHistory(l, cl, numBr)})
-  // println(gen.mkString)
+
   require(gen.toSet.toList.equals(gen))
-  def getHistWithInfo(info: Tuple2[Int, Int]) = {
+  def getHistWithInfo(info: Tuple2[Int, Int]): FoldedHistory = {
     val selected = hist.filter(_.info.equals(info))
     require(selected.length == 1)
     selected(0)
   }
-  def autoConnectFrom(that: AllFoldedHistories) = {
-    require(this.hist.length <= that.hist.length)
-    for (h <- this.hist) {
-      h := that.getHistWithInfo(h.info)
-    }
-  }
+
   def update(ghv: Vec[Bool], ptr: CGHPtr, shift: Int, taken: Bool): AllFoldedHistories = {
     val res = WireInit(this)
     for (i <- 0 until this.hist.length) {
@@ -356,6 +338,7 @@ class AllFoldedHistories(val gen: Seq[Tuple2[Int, Int]])(implicit p: Parameters)
     }
     res
   }
+
   def update(afhob: AllAheadFoldedHistoryOldestBits, lastBrNumOH: UInt, shift: Int, taken: Bool): AllFoldedHistories = {
     val res = WireInit(this)
     for (i <- 0 until this.hist.length) {
@@ -374,10 +357,6 @@ class AllFoldedHistories(val gen: Seq[Tuple2[Int, Int]])(implicit p: Parameters)
     res
   }
 
-  def display(cond: Bool) = {
-    for (h <- hist) {
-    }
-  }
 }
 
 class TableAddr(val idxBits: Int, val banks: Int)(implicit p: Parameters) extends XSBundle{
@@ -399,122 +378,82 @@ trait BasicPrediction extends HasXSParameter {
   def target(pc: UInt): UInt
   def lastBrPosOH: Vec[Bool]
   def brTaken: Bool
-  def shouldShiftVec: Vec[Bool]
+  def shouldShiftVec: Bool
   def fallThruError: Bool
 }
 
 class FullBranchPrediction(implicit p: Parameters) extends XSBundle with HasBPUConst with BasicPrediction {
-  val br_taken_mask = Vec(numBr, Bool())
+  val br_taken = Bool()
 
-  val slot_valids = Bool()
+  val slotValid = Bool()
 
-  val targets = Vec(totalSlot, UInt(VAddrBits.W))
-  val jalr_target = UInt(VAddrBits.W) // special path for indirect predictors
-  val offsets = Vec(totalSlot, UInt(log2Ceil(PredictWidth).W))
+  val targets = UInt(VAddrBits.W)
+  val jalrTarget = UInt(VAddrBits.W) // special path for indirect predictors
+  val offsets = UInt(log2Ceil(PredictWidth).W)
   val fallThroughAddr = UInt(VAddrBits.W)
   val fallThroughErr = Bool()
 
-  val is_jal = Bool()
-  val is_jalr = Bool()
-  val is_call = Bool()
-  val is_ret = Bool()
+  val isJal = Bool()
+  val isJalr = Bool()
+  val isCall = Bool()
+  val isRet = Bool()
   val last_may_be_rvi_call = Bool()
-  val is_br_sharing = Bool()
+  val isBrSharing = Bool()
 
   // val call_is_rvc = Bool()
   val hit = Bool()
 
-  // def br_slot_valids = slot_valids.init
-  // def tail_slot_valid = slot_valids.last
-  def tail_slot_valid = slot_valids
-  def br_valids = {
-    //VecInit(br_slot_valids :+ (tail_slot_valid && is_br_sharing))
-    VecInit(tail_slot_valid && is_br_sharing)
-  }
+  def brValid = slotValid && isBrSharing
 
-  def taken_mask_on_slot = {
-    VecInit(
-      //(br_slot_valids zip br_taken_mask.init).map{ case (t, v) => t && v } :+ 
-      (
-        tail_slot_valid && (
-          is_br_sharing && br_taken_mask.last || !is_br_sharing
-        )
-      )
-    )
-  }
+  def takenOnSlot = slotValid && (isBrSharing && br_taken || !isBrSharing)
 
-  def real_slot_taken_mask(): Vec[Bool] = {
-    VecInit(taken_mask_on_slot.map(_ && hit))
-  }
+  def realSlotTaken: Bool = takenOnSlot && hit
   
   // len numBr
-  def real_br_taken_mask(): Vec[Bool] = {
-    VecInit(
-      taken_mask_on_slot.map(_ && hit).init :+
-      (br_taken_mask.last && tail_slot_valid && is_br_sharing && hit)
-    )
-  }
+  def realBrTaken: Bool = br_taken && slotValid && isBrSharing && hit
 
   // the vec indicating if ghr should shift on each branch
-  def shouldShiftVec =
-    VecInit(br_valids.zipWithIndex.map{ case (v, i) =>
-      v && !real_br_taken_mask.take(i).reduceOption(_||_).getOrElse(false.B)})
+  def shouldShiftVec = brValid
 
-  def lastBrPosOH =
-    VecInit((!hit || !br_valids.reduce(_||_)) +: // not hit or no brs in entry
-      (0 until numBr).map(i =>
-        br_valids(i) &&
-        !real_br_taken_mask.take(i).reduceOption(_||_).getOrElse(false.B) && // no brs taken in front it
-        (real_br_taken_mask()(i) || !br_valids.drop(i+1).reduceOption(_||_).getOrElse(false.B)) && // no brs behind it
-        hit
-      )
-    )
+  def lastBrPosOH = VecInit(Seq(!hit || !brValid, brValid && hit))
 
-  def brTaken = (br_valids zip br_taken_mask).map{ case (a, b) => a && b && hit}.reduce(_||_)
+  def brTaken = brValid && br_taken && hit
 
   def target(pc: UInt): UInt = {
-    val targetVec = targets :+ fallThroughAddr :+ (pc + (FetchWidth * 4).U)
-    val tm = taken_mask_on_slot
-    val selVecOH =
-      tm.zipWithIndex.map{ case (t, i) => !tm.take(i).fold(false.B)(_||_) && t && hit} :+
-      (!tm.asUInt.orR && hit) :+ !hit
+    val targetVec = Seq(targets, fallThroughAddr, pc + (FetchWidth * 4).U)
+    val selVecOH = Seq(takenOnSlot && hit, !takenOnSlot && hit, !hit)
     Mux1H(selVecOH, targetVec)
   }
 
   def fallThruError: Bool = hit && fallThroughErr
 
-  def hit_taken_on_jmp = 
-    //!real_slot_taken_mask().init.reduce(_||_) &&
-    real_slot_taken_mask().last && !is_br_sharing
-  def hit_taken_on_call = hit_taken_on_jmp && is_call
-  def hit_taken_on_ret  = hit_taken_on_jmp && is_ret
-  def hit_taken_on_jalr = hit_taken_on_jmp && is_jalr
+  def hitTakenOnJmp = realSlotTaken && !isBrSharing
+  def hitTakenOnCall = hitTakenOnJmp && isCall
+  def hitTakenOnRet  = hitTakenOnJmp && isRet
+  def hitTakenOnJalr = hitTakenOnJmp && isJalr
 
   def cfiIndex = {
     val cfiIndex = Wire(ValidUndirectioned(UInt(log2Ceil(PredictWidth).W)))
-    cfiIndex.valid := real_slot_taken_mask().asUInt.orR
+    cfiIndex.valid := realSlotTaken
     // when no takens, set cfiIndex to PredictWidth-1
-    cfiIndex.bits :=
-      ParallelPriorityMux(real_slot_taken_mask(), offsets) |
-      Fill(log2Ceil(PredictWidth), (!real_slot_taken_mask().asUInt.orR).asUInt)
+    cfiIndex.bits := Mux(realSlotTaken, offsets, (PredictWidth - 1).U)
     cfiIndex
   }
 
-  // def taken = br_taken_mask.reduce(_||_) || slot_valids.last // || (is_jal || is_jalr)
-  def taken = br_taken_mask.reduce(_||_) || slot_valids// || (is_jal || is_jalr)
+  // def taken = br_taken.reduce(_||_) || slotValid.last // || (isJal || isJalr)
+  def taken = br_taken || slotValid// || (isJal || isJalr)
 
-  def fromFtbEntry(entry: FTBEntry, pc: UInt, last_stage: Option[Tuple2[UInt, Bool]] = None) = {
-    // slot_valids := entry.brSlots.map(_.valid) :+ entry.tailSlot.valid
-    slot_valids := entry.tailSlot.valid
-    targets := entry.getTargetVec(pc)
-    jalr_target := targets.last
-    offsets := entry.getOffsetVec
-    is_jal := entry.tailSlot.valid && entry.isJal
-    is_jalr := entry.tailSlot.valid && entry.isJalr
-    is_call := entry.tailSlot.valid && entry.isCall
-    is_ret := entry.tailSlot.valid && entry.isRet
+  def fromFtbEntry(entry: FTBEntry, pc: UInt):Unit = {
+    slotValid  := entry.valid
+    targets    := entry.getTarget(pc)
+    jalrTarget := targets
+    offsets    := entry.offset
+    isJal      := entry.valid && entry.isJal
+    isJalr     := entry.valid && entry.isJalr
+    isCall     := entry.valid && entry.isCall
+    isRet      := entry.valid && entry.isRet
     last_may_be_rvi_call := entry.last_may_be_rvi_call
-    is_br_sharing := entry.tailSlot.valid && entry.tailSlot.sharing
+    isBrSharing := entry.valid && entry.sharing
     
     val startLower        = Cat(0.U(1.W),    pc(instOffsetBits+log2Ceil(PredictWidth)-1, instOffsetBits))
     val endLowerwithCarry = Cat(entry.carry, entry.pftAddr)
@@ -526,11 +465,7 @@ class FullBranchPrediction(implicit p: Parameters) extends XSBundle with HasBPUC
   }
 }
 
-class SpeculativeInfo(implicit p: Parameters) extends XSBundle
-  with HasBPUConst with BPUUtils {
-  val folded_hist = new AllFoldedHistories(foldedGHistInfos)
-  val afhob = new AllAheadFoldedHistoryOldestBits(foldedGHistInfos)
-  val lastBrNumOH = UInt((numBr+1).W)
+class SpeculativeInfo(implicit p: Parameters) extends XSBundle with HasBPUConst with BPUUtils {
   val histPtr = new CGHPtr
   val rasSp = UInt(log2Ceil(RasSize).W)
   val rasTop = new RASEntry
@@ -543,27 +478,20 @@ class BranchPredictionBundle(implicit p: Parameters) extends XSBundle
   val pc    = Vec(numDup, UInt(VAddrBits.W))
   val valid = Vec(numDup, Bool())
 
-  val full_pred    = Vec(numDup, new FullBranchPrediction)
-  val hasRedirect  = Vec(numDup, Bool())
+  val fullPred    = Vec(numDup, new FullBranchPrediction)
+  val hasRedirect = Vec(numDup, Bool())
   
-  val ftq_idx = new FtqPtr
+  val ftqIdx = new FtqPtr
 
-  def getPredDupWithPC[T <: Data](f: BasicPrediction =>(UInt => T)) = 
-    for (fp & p <- full_pred zip pc) yield {
-      f(fp)(p)
-    }
-
-  def target         = VecInit(full_pred.zip(pc).map {case (fp, p) => fp.target(p)})
-  def cfiIndex       = VecInit(full_pred.map(_.cfiIndex))
-  def lastBrPosOH    = VecInit(full_pred.map(_.lastBrPosOH))
-  def brTaken        = VecInit(full_pred.map(_.brTaken))
-  def shouldShiftVec = VecInit(full_pred.map(_.shouldShiftVec))
-  def fallThruError  = VecInit(full_pred.map(_.fallThruError))
+  def target         = VecInit(fullPred.zip(pc).map {case (fp, p) => fp.target(p)})
+  def cfiIndex       = VecInit(fullPred.map(_.cfiIndex))
+  def lastBrPosOH    = VecInit(fullPred.map(_.lastBrPosOH))
+  def brTaken        = VecInit(fullPred.map(_.brTaken))
+  def shouldShiftVec = VecInit(fullPred.map(_.shouldShiftVec))
+  def fallThruError  = VecInit(fullPred.map(_.fallThruError))
 
   def taken = VecInit(cfiIndex.map(_.valid))
 
-  def display(cond: Bool): Unit = {
-  }
 }
 
 
@@ -573,75 +501,53 @@ class BranchPredictionResp(implicit p: Parameters) extends XSBundle with HasBPUC
   val s2 = new BranchPredictionBundle
   val s3 = new BranchPredictionBundle
 
-  val last_stage_meta = UInt(MaxMetaLength.W)
-  val last_stage_spec_info = new SpeculativeInfo
-  val last_stage_ftb_entry = new FTBEntry
+  val lastStageMeta = UInt(MaxMetaLength.W)
+  val lastStageSpecInfo = new SpeculativeInfo
+  val lastStageFtbEntry = new FTBEntry
 
-  def selectedRespForFtq ={
+  def selectedRespForFtq: BranchPredictionBundle ={
     val res =
       PriorityMux(Seq(
-        ((s3.valid(dupForFtq) && s3.hasRedirect(dupForFtq)) -> s3),
-        ((s2.valid(dupForFtq) && s2.hasRedirect(dupForFtq)) -> s2),
-        (s1.valid(dupForFtq) -> s1)
+        (s3.valid(dupForFtq) && s3.hasRedirect(dupForFtq)) -> s3,
+        (s2.valid(dupForFtq) && s2.hasRedirect(dupForFtq)) -> s2,
+        s1.valid(dupForFtq) -> s1
       ))
     res
   }
-  def selectedRespIdxForFtq =
+  def selectedRespIdxForFtq: UInt =
     PriorityMux(Seq(
-      ((s3.valid(dupForFtq) && s3.hasRedirect(dupForFtq)) -> BP_S3),
-      ((s2.valid(dupForFtq) && s2.hasRedirect(dupForFtq)) -> BP_S2),
-      (s1.valid(dupForFtq) -> BP_S1)
+      (s3.valid(dupForFtq) && s3.hasRedirect(dupForFtq)) -> BP_S3,
+      (s2.valid(dupForFtq) && s2.hasRedirect(dupForFtq)) -> BP_S2,
+      s1.valid(dupForFtq) -> BP_S1
     ))
-  def lastStage = s3
+  def lastStage: BranchPredictionBundle = s3
 }
 
 class BpuToFtqBundle(implicit p: Parameters) extends BranchPredictionResp {}
 
 class BranchPredictionUpdate(implicit p: Parameters) extends XSBundle with HasBPUConst {
   val pc = UInt(VAddrBits.W)
-  val spec_info = new SpeculativeInfo
-  val ftb_entry = new FTBEntry()
+  val specInfo = new SpeculativeInfo
+  val ftbEntry = new FTBEntry()
 
   val cfi_idx = ValidUndirectioned(UInt(log2Ceil(PredictWidth).W))
-  val br_taken_mask = Vec(numBr, Bool())
+  val br_taken = Bool()
   val jmp_taken = Bool()
   val mispred_mask = Vec(numBr+1, Bool())
-  val pred_hit = Bool()
-  val false_hit = Bool()
-  val new_br_insert_pos = Vec(numBr, Bool())
-  val old_entry = Bool()
+  val predHit = Bool()
+  val falseHit = Bool()
+  val new_br_insert_pos = Bool()
+  val oldEntry = Bool()
   val meta = UInt(MaxMetaLength.W)
-  val full_target = UInt(VAddrBits.W)
-  val from_stage = UInt(2.W)
+  val fullTarget = UInt(VAddrBits.W)
+  val fromStage = UInt(2.W)
   val ghist = UInt(HistoryLength.W)
 
-  def is_jal = ftb_entry.tailSlot.valid && ftb_entry.isJal
-  def is_jalr = ftb_entry.tailSlot.valid && ftb_entry.isJalr
-  def is_call = ftb_entry.tailSlot.valid && ftb_entry.isCall
-  def is_ret = ftb_entry.tailSlot.valid && ftb_entry.isRet
+  def isJal = ftbEntry.valid && ftbEntry.isJal
+  def isJalr = ftbEntry.valid && ftbEntry.isJalr
+  def isCall = ftbEntry.valid && ftbEntry.isCall
+  def isRet = ftbEntry.valid && ftbEntry.isRet
 
-  def display(cond: Bool) = {
-  }
 }
 
-class BranchPredictionRedirect(implicit p: Parameters) extends Redirect with HasBPUConst {
-  // override def toPrintable: Printable = {
-  //   p"-----------BranchPredictionRedirect----------- " +
-  //     p"-----------cfiUpdate----------- " +
-  //     p"[pc] ${Hexadecimal(cfiUpdate.pc)} " +
-  //     p"[predTaken] ${cfiUpdate.predTaken}, [taken] ${cfiUpdate.taken}, [isMisPred] ${cfiUpdate.isMisPred} " +
-  //     p"[target] ${Hexadecimal(cfiUpdate.target)} " +
-  //     p"------------------------------- " +
-  //     p"[robPtr] f=${robIdx.flag} v=${robIdx.value} " +
-  //     p"[ftqPtr] f=${ftqIdx.flag} v=${ftqIdx.value} " +
-  //     p"[ftqOffset] ${ftqOffset} " +
-  //     p"[level] ${level}, [interrupt] ${interrupt} " +
-  //     p"[stFtqIdx] f=${stFtqIdx.flag} v=${stFtqIdx.value} " +
-  //     p"[stFtqOffset] ${stFtqOffset} " +
-  //     p"\n"
-
-  // }
-
-  def display(cond: Bool): Unit = {
-  }
-}
+class BranchPredictionRedirect(implicit p: Parameters) extends Redirect with HasBPUConst {}

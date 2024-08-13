@@ -159,7 +159,7 @@ class MissReqPipeRegBundle(edge: TLEdgeOut)(implicit p: Parameters) extends DCac
         false.B
       )
   }
-  
+
   // send out acquire as soon as possible
   // if a new store miss req is about to merge into this pipe reg, don't send acquire now
   def can_send_acquire(valid: Bool, new_req: MissReq): Bool = {
@@ -430,7 +430,7 @@ class MissEntry(edge: TLEdgeOut)(implicit p: Parameters) extends DCacheModule wi
     // cannot accept prefetch req except when a memset patten is detected
     io.primary_ready := !req_valid && (!io.req.bits.isPrefetch ||  io.memSetPattenDetected) && !GatedValidRegNext(primary_fire)
   }
- 
+
   io.secondary_ready := should_merge(io.req.bits)
   io.secondary_reject := should_reject(io.req.bits)
 
@@ -449,7 +449,7 @@ class MissEntry(edge: TLEdgeOut)(implicit p: Parameters) extends DCacheModule wi
 
   // if the entry has a pending merge req, wait for it
   // Note: now, only wait for store, because store may acquire T
-  io.mem_acquire.valid := !s_acquire && !(io.miss_req_pipe_reg.merge && miss_req_pipe_reg_bits.isStore) 
+  io.mem_acquire.valid := !s_acquire && !(io.miss_req_pipe_reg.merge && miss_req_pipe_reg_bits.isStore)
   val grow_param = req.req_coh.onAccess(req.cmd)._2
   val acquireBlock = edge.AcquireBlock(
     fromSource = io.id,
@@ -546,7 +546,7 @@ class MissEntry(edge: TLEdgeOut)(implicit p: Parameters) extends DCacheModule wi
   XSPerfAccumulate("soft_prefetch_number", primary_fire && io.req.bits.source === SOFT_PREFETCH.U)
   XSPerfAccumulate("hard_prefetch_number", primary_fire && io.req.bits.source === DCACHE_PREFETCH_SOURCE.U)
   XSPerfAccumulate("load_prefetch_number", primary_fire && io.req.bits.source === LOAD_SOURCE.U)
-  
+
 
   val (mshr_penalty_sample, mshr_penalty) = TransactionLatencyCounter(GatedValidRegNextN(primary_fire, 2), release_entry)
   XSPerfHistogram("miss_penalty", mshr_penalty, mshr_penalty_sample, 0, 20, 1, true, true)
@@ -681,12 +681,12 @@ class MissQueue(edge: TLEdgeOut)(implicit p: Parameters) extends DCacheModule wi
       for(i <- 0 until 8){
         dataSlipt(i) := reg.data((i + 1) * DataBits - 1, i * DataBits)
       }
-      
+
       validVec(idx) := reqVReg && reg.valid && (get_block(reg.paddr) === get_block(reqPaddrReg))
       dataVec(idx) := dataSlipt(bankAddr)
       when(idx.U === 0.U){
         XSPerfAccumulate("reject addr mathc but not forward data", reqVReg && io.replace_pipe_req.valid && get_block(reg.paddr) === get_block(reqPaddrReg) && !reg.valid)
-      }      
+      }
     }})
 
     assert(PopCount(validVec) <= 1.U)

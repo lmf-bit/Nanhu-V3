@@ -36,7 +36,7 @@ import xiangshan.backend.execute.fu.fence.{FenceToSbuffer, SfenceBundle}
 import xiangshan.backend.issue.EarlyWakeUpInfo
 import xiangshan.backend.rob.RobLsqIO
 import xiangshan.cache._
-import xiangshan.cache.mmu.{BTlbPtwIO, HasTlbConst, PtwSectorResp, TLB, TlbHintIO, TlbIO, TlbReplace}
+import xiangshan.cache.mmu.{BTlbPtwIO, HasTlbConst, PtwSectorResp, TLB_backend, TlbHintIO, TlbIO, TlbReplace}
 import xiangshan.mem._
 import xiangshan.mem.prefetch._
 import xs.utils.mbist.MBISTPipeline
@@ -332,7 +332,7 @@ class MemBlockImp(outer: MemBlock) extends BasicExuBlockImp(outer)
       sms.io_act_stride := RegNextN(io.csrCtrl.l1D_pf_active_stride, 2, Some(30.U))
       sms.io_stride_en := RegNextN(io.csrCtrl.l1D_pf_enable_stride, 2, Some(true.B))
       Some(sms)
-  
+
     case _ => None
   }
   val hartId = p(XSCoreParamsKey).HartId
@@ -483,7 +483,7 @@ class MemBlockImp(outer: MemBlock) extends BasicExuBlockImp(outer)
 
 
   val dtlb_ld_st = VecInit(Seq.fill(1) {
-    val dtlb = Module(new TLB(ld_tlb_ports + exuParameters.StuCnt, 2, OnedtlbParams))
+    val dtlb = Module(new TLB_backend(ld_tlb_ports + exuParameters.StuCnt, 2, OnedtlbParams))
     dtlb.io
   })
   if(!UseOneDtlb){
@@ -494,7 +494,7 @@ class MemBlockImp(outer: MemBlock) extends BasicExuBlockImp(outer)
     dtlb_ld_st.take(ld_tlb_ports)
   } else {
     VecInit(Seq.fill(1) {
-      val tlb_ld =  Module(new TLB(ld_tlb_ports, 2, ldtlbParams))
+      val tlb_ld =  Module(new TLB_backend(ld_tlb_ports, 2, ldtlbParams))
       tlb_ld.io // let the module have name in waveform
     })
   }
@@ -503,7 +503,7 @@ class MemBlockImp(outer: MemBlock) extends BasicExuBlockImp(outer)
     dtlb_ld_st.drop(ld_tlb_ports)
   } else {
       VecInit(Seq.fill(1) {
-      val tlb_st = Module(new TLB(exuParameters.StuCnt, 1, sttlbParams))
+      val tlb_st = Module(new TLB_backend(exuParameters.StuCnt, 1, sttlbParams))
       tlb_st.io // let the module have name in waveform
     })
   }
@@ -569,6 +569,7 @@ class MemBlockImp(outer: MemBlock) extends BasicExuBlockImp(outer)
     dtlb_ld.foreach(_.ptw.resp.valid := ptw_resp_v && Cat(ptw_resp_next.vector.take(ld_tlb_ports)).orR)
     dtlb_st.foreach(_.ptw.resp.valid := ptw_resp_v && Cat(ptw_resp_next.vector.drop(ld_tlb_ports)).orR)
   }
+  dtlb.map(_.flushPipe.map(a => a := false.B)) // non-block doesn't need
 
   // fdi memory access check
   val fdi = Module(new MemFDI())

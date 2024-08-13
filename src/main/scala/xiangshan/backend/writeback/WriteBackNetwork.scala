@@ -25,9 +25,9 @@ import chisel3.util._
 import xiangshan.backend.execute.exu.ExuType
 import freechips.rocketchip.diplomacy._
 import xiangshan.{ExuOutput, HasXSParameter, MemPredUpdateReq, Redirect, XSCoreParamsKey}
-import xiangshan.ExceptionNO.{fdiUJumpFault}
-import xiangshan.frontend.Ftq_RF_Components
+import xiangshan.frontend.FtqPCEntry
 import difftest._
+import xiangshan.ExceptionNO.fdiUJumpFault
 import xs.utils.GTimer
 
 class WriteBackNetwork(implicit p:Parameters) extends LazyModule {
@@ -44,7 +44,7 @@ class WriteBackNetworkImp(outer:WriteBackNetwork)(implicit p:Parameters) extends
   wbSources.foreach(w => print(w._2))
   val io = IO(new Bundle {
     val pcReadAddr = Output(Vec(2, UInt(log2Ceil(FtqSize).W)))
-    val pcReadData = Input(Vec(2, new Ftq_RF_Components))
+    val pcReadData = Input(Vec(2, new FtqPCEntry))
     val redirectOut = Output(Valid(new Redirect))
     val memPredUpdate = Output(Valid(new MemPredUpdateReq))
     val preWalk = Output(Valid(new Redirect))
@@ -70,7 +70,7 @@ class WriteBackNetworkImp(outer:WriteBackNetwork)(implicit p:Parameters) extends
     res.bits.redirect := RegEnable(realIn.bits.redirect, realIn.bits.redirectValid)
     res
   }
-  
+
   private def PipeWithRedirectDelayFDI(in: Valid[ExuOutput], latency: Int, p: Parameters): Valid[ExuOutput] = {
     require(latency > 0)
     val res = Wire(Valid(new ExuOutput()(p)))

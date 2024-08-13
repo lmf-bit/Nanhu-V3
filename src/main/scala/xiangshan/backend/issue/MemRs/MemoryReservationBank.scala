@@ -29,7 +29,13 @@ import xiangshan.backend.issue.{EarlyWakeUpInfo, WakeUpInfo}
 import xiangshan.backend.rob.RobPtr
 import xiangshan.mem.SqPtr
 
-class MemoryReservationBank(entryNum:Int, stuNum:Int, wakeupWidth:Int, regWkpIdx:Seq[Int], fpWkpIdx:Seq[Int], vecWkpIdx:Seq[Int])(implicit p: Parameters) extends Module{
+class MemoryReservationBank(entryNum:Int,
+                            stuNum:Int,
+                            wakeupWidth:Int,
+                            regWkpIdx:Seq[Int],
+                            fpWkpIdx:Seq[Int],
+                            vecWkpIdx:Seq[Int],
+                            replayPortNum:Int)(implicit p: Parameters) extends Module{
   private val loadUnitNum = p(XSCoreParamsKey).exuParameters.LduCnt
   val io = IO(new Bundle {
     val redirect = Input(Valid(new Redirect))
@@ -59,7 +65,7 @@ class MemoryReservationBank(entryNum:Int, stuNum:Int, wakeupWidth:Int, regWkpIdx
     val auxStdIssValid = Input(Bool())
     val auxSLoadIssValid = Input(Bool())
 
-    val replay = Input(Vec(4, Valid(new Replay(entryNum))))
+    val replay = Input(Vec(replayPortNum, Valid(new Replay(entryNum))))
 
     val stIssued = Input(Vec(stuNum, Valid(new RobPtr)))
     val stLastCompelet = Input(new SqPtr)
@@ -70,7 +76,14 @@ class MemoryReservationBank(entryNum:Int, stuNum:Int, wakeupWidth:Int, regWkpIdx
   })
 
 
-  private val statusArray = Module(new MemoryStatusArray(entryNum, stuNum, wakeupWidth, regWkpIdx, fpWkpIdx, vecWkpIdx))
+  private val statusArray = Module(new MemoryStatusArray(entryNum,
+    stuNum,
+    wakeupWidth,
+    regWkpIdx,
+    fpWkpIdx,
+    vecWkpIdx,
+    replayPortNum))
+
 //  private val payloadArray = Module(new PayloadArray(new MicroOp, entryNum, 4, "MemoryPayloadArray"))
   private val payloadArray = Module(new PayloadArray(new MicroOp, entryNum, 4, "MemoryPayloadArray"))
 

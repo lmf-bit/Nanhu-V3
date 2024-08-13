@@ -31,8 +31,6 @@ case class TLBParameters
   name: String = "none",
   fetchi: Boolean = false, // TODO: remove it
   useDmode: Boolean = true,
-  sameCycle: Boolean = false,
-  missSameCycle: Boolean = false,
   nWays: Int = 48,
   // To avoid issues with unexpected nSets values in FA Cache, 
   // we hardcode nSets to 1 and restrict user modifications
@@ -135,6 +133,20 @@ trait HasTlbConst extends HasXSParameter {
     replaceWrapper(VecInit(v).asUInt, lruIdx)
   }
 
+  implicit def ptwresp_to_tlbperm(ptwResp: PtwSectorResp): TlbPermBundle = {
+    val tp = Wire(new TlbPermBundle)
+    val ptePerm = ptwResp.entry.perm.get.asTypeOf(new PtePermBundle().cloneType)
+    tp.pf := ptwResp.pf
+    tp.af := ptwResp.af
+    tp.d := ptePerm.d
+    tp.a := ptePerm.a
+    tp.g := ptePerm.g
+    tp.u := ptePerm.u
+    tp.x := ptePerm.x
+    tp.w := ptePerm.w
+    tp.r := ptePerm.r
+    tp
+  }
 }
 
 trait HasPtwConst extends HasTlbConst with MemoryOpConstants{
