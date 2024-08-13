@@ -285,8 +285,8 @@ class LoadRAWQueue(implicit p: Parameters) extends XSModule
   rollbackRes.bits.isXRet := false.B
   rollbackRes.bits.isFlushPipe := false.B
   rollbackRes.bits.isPreWalk := false.B
-  rollbackRes.bits.debugIsCtrl := true.B
-  rollbackRes.bits.debugIsMemVio := false.B
+  rollbackRes.bits.debugIsCtrl := false.B
+  rollbackRes.bits.debugIsMemVio := true.B
 
   io.rollback := rollbackRes
 
