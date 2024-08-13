@@ -562,7 +562,18 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
       topdown_stages(CtrlBlkTopdownStage.DECP.id)(i).reasons(TopDownCounters.BackendStall.id) := true.B
     }
   }
+
+  val robHeadIsInt = FuType.isIntExu(rob.io.topdown.robHeadInfo.ctrl.fuType) && rob.io.topdown.robHeadNotReady
+  val robHeadIsFp = FuType.isFpExu(rob.io.topdown.robHeadInfo.ctrl.fuType) && rob.io.topdown.robHeadNotReady
+  val robHeadIsDiv = FuType.isDivExu(rob.io.topdown.robHeadInfo.ctrl.fuType) && rob.io.topdown.robHeadNotReady
+  val robHeadIsLoad = FuType.isLoad(rob.io.topdown.robHeadInfo.ctrl.fuType) && rob.io.topdown.robHeadNotReady || !io.enqLsq.canAccept
+  val robHeadIsStore = FuType.isStore(rob.io.topdown.robHeadInfo.ctrl.fuType) && rob.io.topdown.robHeadNotReady || !io.enqLsq.canAccept
+  val robHeadIsAmo = FuType.isAMO(rob.io.topdown.robHeadInfo.ctrl.fuType) && rob.io.topdown.robHeadNotReady
+  val robHeadIsMem = robHeadIsLoad || robHeadIsStore
+  val robLsFull = rob.io.robFull || !io.enqLsq.canAccept
+
   // Update Top-down reasoning in Rename-Dispatch stage
+  topdown_stages(CtrlBlkTopdownStage.REN_DIS.id).foreach(_.reasons(TopDownCounters.NoStall.id) := true.B)
   topdown_stages(CtrlBlkTopdownStage.REN_DIS.id).foreach(_.reasons(TopDownCounters.ControlRecoveryStall.id) := rename.io.topdown.ctrlRecStall)
   topdown_stages(CtrlBlkTopdownStage.REN_DIS.id).foreach(_.reasons(TopDownCounters.MemVioRecoveryStall.id)  := rename.io.topdown.mvioRecStall)
   topdown_stages(CtrlBlkTopdownStage.REN_DIS.id).foreach(_.reasons(TopDownCounters.OtherCoreStall.id)       := rename.io.topdown.otherRecStall)
@@ -570,6 +581,24 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
   topdown_stages(CtrlBlkTopdownStage.REN_DIS.id).foreach(_.reasons(TopDownCounters.FpFlStall.id)         := rename.io.topdown.fpFlStall)
   topdown_stages(CtrlBlkTopdownStage.REN_DIS.id).foreach(_.reasons(TopDownCounters.vtypeRenameStall.id)  := rename.io.topdown.vtypeRenameStall)
   topdown_stages(CtrlBlkTopdownStage.REN_DIS.id).foreach(_.reasons(TopDownCounters.MultiFlStall.id)      := rename.io.topdown.multiFlStall)
+  topdown_stages(CtrlBlkTopdownStage.REN_DIS.id).foreach(_.reasons(TopDownCounters.IntDqStall.id) := !robHeadIsInt && !rob.io.robFull && !intDq.io.enq.canAccept)
+  topdown_stages(CtrlBlkTopdownStage.REN_DIS.id).foreach(_.reasons(TopDownCounters.FpDqStall.id) := !robHeadIsFp && !rob.io.robFull && !fpDq.io.enq.canAccept)
+  topdown_stages(CtrlBlkTopdownStage.REN_DIS.id).foreach(_.reasons(TopDownCounters.MemDqStall.id) := !robHeadIsMem && !rob.io.robFull && !lsDq.io.enq.canAccept)
+  topdown_stages(CtrlBlkTopdownStage.REN_DIS.id).foreach(_.reasons(TopDownCounters.AtomicExuStall.id) := robHeadIsAmo)
+  topdown_stages(CtrlBlkTopdownStage.REN_DIS.id).foreach(_.reasons(TopDownCounters.StoreExuStall.id) := robHeadIsStore)
+  topdown_stages(CtrlBlkTopdownStage.REN_DIS.id).foreach(_.reasons(TopDownCounters.LoadExuStall.id) := robHeadIsLoad)
+  topdown_stages(CtrlBlkTopdownStage.REN_DIS.id).foreach(_.reasons(TopDownCounters.DivExuStall.id) := robHeadIsDiv)
+  topdown_stages(CtrlBlkTopdownStage.REN_DIS.id).foreach(_.reasons(TopDownCounters.IntExuStall.id) := robHeadIsInt && !robHeadIsDiv)
+  topdown_stages(CtrlBlkTopdownStage.REN_DIS.id).foreach(_.reasons(TopDownCounters.FpExuStall.id) := robHeadIsFp)
+
+  val stallReasons = Wire(Vec(RenameWidth, UInt(log2Up(TopDownCounters.NumStallReasons.id).W)))
+  stallReasons.zip(rename.io.in.map(_.fire)).zipWithIndex.foreach {
+    case ((reason, fire), i) => {
+      reason := (TopDownCounters.NumStallReasons.id - 1).U - PriorityEncoder(topdown_stages(CtrlBlkTopdownStage.REN_DIS.id)(i).reasons.reverse)
+    }
+  }
+
+  TopDownCounters.values.foreach(ctr => XSPerfAccumulate(ctr.toString(), PopCount(stallReasons.map(_ === ctr.id.U))))
 
   if (env.EnableTopDown) {
     val stage2Redirect_valid_when_pending = pendingRedirect && redirectDelay.valid

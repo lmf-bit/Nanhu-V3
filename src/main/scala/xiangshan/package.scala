@@ -114,6 +114,7 @@ package object xiangshan {
     val vectorTypes: Seq[UInt] = Seq(vmac, valu, vfp, vdiv, vmask, vreduc, vpermu, s2v, ldu, stu)
 
     def isIntExu(fuType: UInt): Bool = integerTypes.map(_ === fuType).reduce(_||_)
+    def isDivExu(fuType: UInt): Bool = fuType === div
 
     def isJumpExu(fuType: UInt): Bool = fuType === jmp
 
@@ -123,6 +124,7 @@ package object xiangshan {
 
     def isLoadStore(fuType: UInt): Bool = isMemExu(fuType)
 
+    def isLoad(fuType: UInt): Bool = fuType === ldu
     def isStore(fuType: UInt): Bool = fuType === stu
 
     def isAMO(fuType: UInt): Bool = fuType === mou
@@ -441,6 +443,22 @@ package object xiangshan {
     val FpFlStall = Value("FpFlStall")
     val IntFlStall = Value("IntFlStall")
     val MultiFlStall = Value("MultiFlStall")
+
+    //DispatchQueue Full
+    val IntDqStall = Value("IntDqFullStall")
+    val FpDqStall = Value("FpDqFullStall")
+    val MemDqStall = Value("MemDqFullStall")
+
+    //Rob Full
+    val RobFullStall = Value("RobFullStall")
+
+    // Exu Stall
+    val AtomicExuStall = Value("AtomicStall")
+    val StoreExuStall = Value("StoreStall")
+    val LoadExuStall = Value("LoadStall")
+    val DivExuStall = Value("DivStall")
+    val IntExuStall = Value("IntStall")
+    val FpExuStall = Value("FpExuStall")
 
     // bad speculation
     val OtherRecoveryStall = Value("OtherRecoveryStall")

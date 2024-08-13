@@ -84,6 +84,7 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
       val commitBlkByRedirect = Output(Bool())
       val commitBlkByTrap = Output(Bool())
       val robHeadInfo = Output(new MicroOp())
+      val robHeadNotReady = Output(Bool())
     }
   })
 
@@ -1082,6 +1083,7 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
   io.topdown.commitBlkByRedirect := someCmtBlocked && io.redirect.valid
   io.topdown.commitBlkByTrap := someCmtBlocked && (hasWFI || exceptionWaitingRedirect)
   io.topdown.robHeadInfo := debug_microOp(deqPtrVec.head.value)
+  io.topdown.robHeadNotReady := valid(deqPtrVec.head.value) && !writebacked(deqPtrVec.head.value)
 
   val commitIsMove = commitDebugUop.map(_.ctrl.isMove)
   XSPerfAccumulate("commitInstrMove", ifCommit(PopCount(io.commits.commitValid.zip(commitIsMove).map { case (v, m) => v && m })))
