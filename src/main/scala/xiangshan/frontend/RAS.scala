@@ -207,7 +207,7 @@ class RAS(implicit p: Parameters) extends BasePredictor {
 
   val s2_spec_push = WireInit(false.B)
   val s2_spec_pop = WireInit(false.B)
-  val s2_full_pred = io.in.bits.resp_in(0).s2.full_pred
+  val s2_full_pred = io.in.bits.resp_in(0).s2.fullPred
   // when last inst is an rvi call, fall through address would be set to the middle of it, so an addition is needed
   val s2_spec_new_addr = s2_full_pred(dupForRas).fallThroughAddr + Mux(s2_full_pred(dupForRas).last_may_be_rvi_call, 2.U, 0.U)
   spec_ras.push_valid := s2_spec_push
@@ -215,15 +215,15 @@ class RAS(implicit p: Parameters) extends BasePredictor {
   spec_ras.spec_new_addr := s2_spec_new_addr
 
   // confirm that the call/ret is the taken cfi
-  s2_spec_push := io.s2_fire(dupForRas) && s2_full_pred(dupForRas).hit_taken_on_call && !io.s3_redirect(dupForRas)
-  s2_spec_pop  := io.s2_fire(dupForRas) && s2_full_pred(dupForRas).hit_taken_on_ret  && !io.s3_redirect(dupForRas)
+  s2_spec_push := io.s2_fire(dupForRas) && s2_full_pred(dupForRas).hitTakenOnCall && !io.s3_redirect(dupForRas)
+  s2_spec_pop  := io.s2_fire(dupForRas) && s2_full_pred(dupForRas).hitTakenOnRet  && !io.s3_redirect(dupForRas)
 
-  val s2_jalr_target_dup = io.out.s2.full_pred.map(_.jalr_target)
-  val s2_last_target_in_dup = s2_full_pred.map(_.targets.last)
-  val s2_last_target_out_dup = io.out.s2.full_pred.map(_.targets.last)
-  val s2_is_jalr_dup = s2_full_pred.map(_.is_jalr)
-  val s2_is_ret_dup = s2_full_pred.map(_.is_ret)
-  // assert(is_jalr && is_ret || !is_ret)
+  val s2_jalr_target_dup = io.out.s2.fullPred.map(_.jalrTarget)
+  val s2_last_target_in_dup = s2_full_pred.map(_.targets)
+  val s2_last_target_out_dup = io.out.s2.fullPred.map(_.targets)
+  val s2_is_jalr_dup = s2_full_pred.map(_.isJalr)
+  val s2_is_ret_dup = s2_full_pred.map(_.isRet)
+  // assert(isJalr && isRet || !isRet)
   val ras_enable_dup = RegNext(dup(io.ctrl.ras_enable))
   for (ras_enable & s2_is_ret & s2_jalr_target & spec_top_addr <-
     ras_enable_dup zip s2_is_ret_dup zip s2_jalr_target_dup zip spec_top_addr_dup) {
@@ -242,13 +242,13 @@ class RAS(implicit p: Parameters) extends BasePredictor {
   val s3_sp = RegEnable(spec_ras.sp, io.s2_fire(dupForRas))
   val s3_spec_new_addr = RegEnable(s2_spec_new_addr, io.s2_fire(dupForRas))
 
-  val s3_full_pred = io.in.bits.resp_in(0).s3.full_pred
-  val s3_jalr_target_dup = io.out.s3.full_pred.map(_.jalr_target)
-  val s3_last_target_in_dup = s3_full_pred.map(_.targets.last)
-  val s3_last_target_out_dup = io.out.s3.full_pred.map(_.targets.last)
-  val s3_is_jalr_dup = s3_full_pred.map(_.is_jalr)
-  val s3_is_ret_dup = s3_full_pred.map(_.is_ret)
-  // assert(is_jalr && is_ret || !is_ret)
+  val s3_full_pred = io.in.bits.resp_in(0).s3.fullPred
+  val s3_jalr_target_dup = io.out.s3.fullPred.map(_.jalrTarget)
+  val s3_last_target_in_dup = s3_full_pred.map(_.targets)
+  val s3_last_target_out_dup = io.out.s3.fullPred.map(_.targets)
+  val s3_is_jalr_dup = s3_full_pred.map(_.isJalr)
+  val s3_is_ret_dup = s3_full_pred.map(_.isRet)
+  // assert(isJalr && isRet || !isRet)
 
   for (ras_enable & s3_is_ret & s3_jalr_target & s3_top <-
     ras_enable_dup zip s3_is_ret_dup zip s3_jalr_target_dup zip s3_top_dup) {
@@ -264,12 +264,12 @@ class RAS(implicit p: Parameters) extends BasePredictor {
 
   val s3_pushed_in_s2 = RegEnable(s2_spec_push, io.s2_fire(dupForRas))
   val s3_popped_in_s2 = RegEnable(s2_spec_pop,  io.s2_fire(dupForRas))
-  val s3_push = io.in.bits.resp_in(0).s3.full_pred(dupForRas).hit_taken_on_call
-  val s3_pop  = io.in.bits.resp_in(0).s3.full_pred(dupForRas).hit_taken_on_ret
+  val s3_push = io.in.bits.resp_in(0).s3.fullPred(dupForRas).hitTakenOnCall
+  val s3_pop  = io.in.bits.resp_in(0).s3.fullPred(dupForRas).hitTakenOnRet
 
   val s3_recover = io.s3_fire(dupForRas) && (s3_pushed_in_s2 =/= s3_push || s3_popped_in_s2 =/= s3_pop)
-  io.out.last_stage_spec_info.rasSp  := s3_sp
-  io.out.last_stage_spec_info.rasTop := s3_top_dup(dupForRas)
+  io.out.lastStageSpecInfo.rasSp  := s3_sp
+  io.out.lastStageSpecInfo.rasTop := s3_top_dup(dupForRas)
 
 
   val redirect = RegNext(io.redirect)

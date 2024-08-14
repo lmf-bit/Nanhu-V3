@@ -55,7 +55,7 @@ case class XSCoreParameters
   VAddrBits: Int = 39,
   HasFPU: Boolean = true,
   HasCustomCSRCacheOp: Boolean = true,
-  FetchWidth: Int = 8,
+  FetchWidth: Int = 6,
   AsidLength: Int = 16,
   EnableBPU: Boolean = true,
   EnableBPD: Boolean = true,
@@ -128,13 +128,14 @@ case class XSCoreParameters
 
       (preds, ras.io.out)
     }),
-  IBufSize: Int = 48,
+  IBufSize: Int = 32,
+  IBufNBank: Int = 4,
   DecodeWidth: Int = 4,
   RenameWidth: Int = 4,
   CommitWidth: Int = 6,
   RabCommitWidth: Int = 6,
   RenameSnapshotNum: Int = 4,
-  FtqSize: Int = 64,
+  FtqSize: Int = 48,
   EnableLoadFastWakeUp: Boolean = true, // NOTE: not supported now, make it false
   NRPhyRegs: Int = 128,
   LoadQueueSize: Int = 80,
@@ -339,6 +340,7 @@ trait HasXSParameter {
   val CacheLineHalfWord = CacheLineSize / 16
   val ExtHistoryLength = HistoryLength + 64
   val IBufSize = coreParams.IBufSize
+  val IBufNBank = coreParams.IBufNBank
   val DecodeWidth = coreParams.DecodeWidth
   val RenameWidth = coreParams.RenameWidth
   val CommitWidth = coreParams.CommitWidth

@@ -25,28 +25,30 @@ import xs.utils.CircularQueuePtr
 import xs.utils.perf.HasPerfLogging
 
 class WrBypass[T <: Data](gen: T, val numEntries: Int, val idxWidth: Int,
-  val numWays: Int = 1, val tagWidth: Int = 0)(implicit p: Parameters) extends XSModule with HasPerfLogging {
+val numWays: Int = 1, val tagWidth: Int = 0)(implicit p: Parameters) 
+extends XSModule with HasPerfLogging {
+
   require(numEntries >= 0)
   require(idxWidth > 0)
   require(numWays >= 1)
   require(tagWidth >= 0)
+
   def hasTag = tagWidth > 0
   def multipleWays = numWays > 1
-  val io = IO(new Bundle {
-    val wen = Input(Bool())
-    val write_idx = Input(UInt(idxWidth.W))
-    val write_tag = if (hasTag) Some(Input(UInt(tagWidth.W))) else None
-    val write_data = Input(Vec(numWays, gen))
-    val write_way_mask = if (multipleWays) Some(Input(Vec(numWays, Bool()))) else None
 
-    val hit = Output(Bool())
-    val hit_data = Vec(numWays, Valid(gen))
+  val io = IO(new Bundle {
+    val wen          = Input(Bool())
+    val writeIdx     = Input(UInt(idxWidth.W))
+    val writeTag     = if (hasTag) Some(Input(UInt(tagWidth.W))) else None
+    val writeData    = Input(Vec(numWays, gen))
+    val writeWayMask = if (multipleWays) Some(Input(Vec(numWays, Bool()))) else None
+
+    val hit     = Output(Bool())
+    val hitData = Vec(numWays, Valid(gen))
   })
 
-  class WrBypassPtr extends CircularQueuePtr[WrBypassPtr](numEntries){
-  }
-
-  class Idx_Tag extends Bundle {
+  class WrBypassPtr extends CircularQueuePtr[WrBypassPtr](numEntries)
+  class IdxTag extends Bundle {
     val idx = UInt(idxWidth.W)
     val tag = if (hasTag) Some(UInt(tagWidth.W)) else None
     def apply(idx: UInt, tag: UInt) = {
@@ -54,63 +56,64 @@ class WrBypass[T <: Data](gen: T, val numEntries: Int, val idxWidth: Int,
       this.tag.map(_ := tag)
     }
   }
-  val idx_tag_cam = Module(new CAMTemplate(new Idx_Tag, numEntries, 1))
-  val data_mem = Mem(numEntries, Vec(numWays, gen))
 
-  val valids = RegInit(0.U.asTypeOf(Vec(numEntries, Vec(numWays, Bool()))))
-  val ever_written = RegInit(0.U.asTypeOf(Vec(numEntries, Bool())))
+  val idxTagCam   = Module(new CAMTemplate(new IdxTag, numEntries, 1))
+  val dataMem     = Mem(numEntries, Vec(numWays, gen))
+  val valids      = RegInit(0.U.asTypeOf(Vec(numEntries, Vec(numWays, Bool()))))
+  val everWritten = RegInit(0.U.asTypeOf(Vec(numEntries, Bool())))
 
-  val enq_ptr = RegInit(0.U.asTypeOf(new WrBypassPtr))
-  val enq_idx = enq_ptr.value
-
-  idx_tag_cam.io.r.req(0)(io.write_idx, io.write_tag.getOrElse(0.U))
-  val hits_oh = idx_tag_cam.io.r.resp(0).zip(ever_written).map {case (h, ew) => h && ew}
-  val hit_idx = OHToUInt(hits_oh)
-  val hit = hits_oh.reduce(_||_)
-
-  io.hit := hit
+  // read cam
+  idxTagCam.io.r.req(0)(io.writeIdx, io.writeTag.getOrElse(0.U))
+  val hitsOH = idxTagCam.io.r.resp(0).zip(everWritten).map {case (resp, ew) => resp && ew}
+  val hitIdx = OHToUInt(hitsOH)
+  val isHit  = hitsOH.reduce(_||_)
+  // wrbypass resp
+  io.hit := isHit
   for (i <- 0 until numWays) {
-    io.hit_data(i).valid := Mux1H(hits_oh, valids)(i)
-    io.hit_data(i).bits  := data_mem.read(hit_idx)(i)
+    io.hitData(i).valid := Mux1H(hitsOH, valids)(i)
+    io.hitData(i).bits  := dataMem.read(hitIdx)(i)
   }
 
-  val full_mask = Fill(numWays, 1.U(1.W)).asTypeOf(Vec(numWays, Bool()))
-  val update_way_mask = io.write_way_mask.getOrElse(full_mask)
-
-  // write data on every request
-  when (io.wen) {
-    val data_write_idx = Mux(hit, hit_idx, enq_idx)
-    data_mem.write(data_write_idx, io.write_data, update_way_mask)
+  // write
+  val enqPtr = RegInit(0.U.asTypeOf(new WrBypassPtr))
+  val enqIdx = enqPtr.value
+  val camWriteEna = io.wen && !isHit
+  enqPtr := enqPtr + camWriteEna
+  // cam
+  idxTagCam.io.w.valid      := camWriteEna
+  idxTagCam.io.w.bits.index := enqIdx
+  idxTagCam.io.w.bits.data(io.writeIdx, io.writeTag.getOrElse(0.U))
+  // dataMem
+  val fullMask = Fill(numWays, 1.U(1.W)).asTypeOf(Vec(numWays, Bool()))
+  val writeDataMemWayMask = io.writeWayMask.getOrElse(fullMask)
+  when(io.wen) {
+    val writeDataMemIdx = Mux(isHit, hitIdx, enqIdx)
+    dataMem.write(writeDataMemIdx, io.writeData, writeDataMemWayMask)
   }
-
-  // update valids
+  // valids, everWritten
   for (i <- 0 until numWays) {
-    when (io.wen) {
-      when (hit) {
-        when (update_way_mask(i)) {
-          valids(hit_idx)(i) := true.B
+    when(io.wen) {
+      when(isHit) {
+        when(writeDataMemWayMask(i)) {
+          valids(hitIdx)(i) := true.B
         }
       }.otherwise {
-        ever_written(enq_idx) := true.B
-        valids(enq_idx)(i) := false.B
-        when (update_way_mask(i)) {
-          valids(enq_idx)(i) := true.B
+        everWritten(enqIdx) := true.B
+        valids(enqIdx)(i)   := false.B
+        when(writeDataMemWayMask(i)) {
+          valids(enqIdx)(i) := true.B
         }
       }
     }
   }
 
-  val enq_en = io.wen && !hit
-  idx_tag_cam.io.w.valid := enq_en
-  idx_tag_cam.io.w.bits.index := enq_idx
-  idx_tag_cam.io.w.bits.data(io.write_idx, io.write_tag.getOrElse(0.U))
-  enq_ptr := enq_ptr + enq_en
+  // perf counters
+  XSPerfAccumulate("wrbypass_hit",  io.wen &&  isHit)
+  XSPerfAccumulate("wrbypass_miss", io.wen && !isHit)
 
-  XSPerfAccumulate("wrbypass_hit",  io.wen &&  hit)
-  XSPerfAccumulate("wrbypass_miss", io.wen && !hit)
+  XSDebug(io.wen && isHit,  p"wrbypass hit entry #${hitIdx}, idx ${io.writeIdx}" +
+    p"tag ${io.writeTag.getOrElse(0.U)}data ${io.writeData}\n")
+  XSDebug(io.wen && !isHit, p"wrbypass enq entry #${enqIdx}, idx ${io.writeIdx}" +
+    p"tag ${io.writeTag.getOrElse(0.U)}data ${io.writeData}\n")
 
-  XSDebug(io.wen && hit,  p"wrbypass hit entry #${hit_idx}, idx ${io.write_idx}" +
-    p"tag ${io.write_tag.getOrElse(0.U)}data ${io.write_data}\n")
-  XSDebug(io.wen && !hit, p"wrbypass enq entry #${enq_idx}, idx ${io.write_idx}" +
-    p"tag ${io.write_tag.getOrElse(0.U)}data ${io.write_data}\n")
 }

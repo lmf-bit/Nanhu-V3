@@ -96,8 +96,7 @@ class IBufEntry(implicit p: Parameters) extends XSBundle {
   }
 }
 
-class Ibuffer(implicit p: Parameters) extends XSModule
-with HasCircularQueuePtrHelper with HasPerfEvents with HasPerfLogging {
+class IBuffer(implicit p: Parameters) extends XSModule with HasCircularQueuePtrHelper with HasPerfEvents with HasPerfLogging {
   val io = IO(new IBufferIO)
 
   private val ibuf: Vec[IBufEntry] = RegInit(VecInit.fill(IBufSize)(0.U.asTypeOf(new IBufEntry)))
@@ -291,3 +290,4 @@ with HasCircularQueuePtrHelper with HasPerfEvents with HasPerfLogging {
   )
   generatePerfEvent()
 }
+

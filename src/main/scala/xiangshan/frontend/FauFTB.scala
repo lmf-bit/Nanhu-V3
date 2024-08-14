@@ -28,256 +28,180 @@ trait FauFTBParams extends HasXSParameter with HasBPUConst {
   val numWays = 64
   val tagSize = 16
 
-  val numDup_local = 1
-
-  def special_idx_for_dup = dupForTageSC
-
-  def getTag(pc: UInt) = pc(tagSize+instOffsetBits-1, instOffsetBits)
+  def getTag(pc: UInt): UInt = pc(tagSize + instOffsetBits - 1, instOffsetBits)
 }
-
-class FauFTBEntry(implicit p: Parameters) extends FTBEntry()(p) {}
 
 class FauFTBWay(implicit p: Parameters) extends XSModule with FauFTBParams {
   val io = IO(new Bundle{
-    val req_tag = Input(UInt(tagSize.W))
-    val resp = Output(new FauFTBEntry)
-    val resp_hit = Output(Bool())
-    val update_req_tag = Input(UInt(tagSize.W))
-    val update_hit = Output(Bool())
-    val write_valid = Input(Bool())
-    val write_entry = Input(new FauFTBEntry)
-    val write_tag = Input(UInt(tagSize.W))
-    val tag_read = Output(UInt(tagSize.W))
+    /** Predict read */
+    val reqTag  = Input(UInt(tagSize.W))
+    val resp    = Output(new FTBEntry)
+    val respHit = Output(Bool())
+
+    /** Update read */
+    val updateReqTag = Input(UInt(tagSize.W))
+    val updateHit    = Output(Bool())
+    val tagRead      = Output(UInt(tagSize.W))
+
+    /** Update write */
+    val writeValid = Input(Bool())
+    val writeEntry = Input(new FTBEntry)
+    val writeTag   = Input(UInt(tagSize.W))
   })
 
-  val data = Reg(new FauFTBEntry)
-  val tag = Reg(UInt(tagSize.W))
-  val valid = RegInit(false.B)
+  private val valid = RegInit(false.B)
+  private val tag   = Reg(UInt(tagSize.W))
+  private val data  = Reg(new FTBEntry)
 
   io.resp := data
-  io.resp_hit := tag === io.req_tag && valid
-  // write bypass to avoid multiple hit
-  io.update_hit := ((tag === io.update_req_tag) && valid) ||
-                   ((io.write_tag === io.update_req_tag) && io.write_valid)
-  io.tag_read := tag
+  io.respHit := tag === io.reqTag && valid
 
-  when (io.write_valid) {
-    when (!valid) {
-      valid := true.B
-    }
-    tag   := io.write_tag
-    data  := io.write_entry
+  /** Write bypass to avoid multiple hit */
+  io.updateHit := ((tag === io.updateReqTag) && valid) || ((io.writeTag === io.updateReqTag) && io.writeValid)
+  io.tagRead := tag
+
+  when (io.writeValid) {
+    valid := true.B
+    tag   := io.writeTag
+    data  := io.writeEntry
   }
 }
 
-
 class FauFTB(implicit p: Parameters) extends BasePredictor with FauFTBParams {
-  
+
+  private val fauftbEnable = RegNext(dup(io.ctrl.ubtb_enable))
+
   class FauFTBMeta(implicit p: Parameters) extends XSBundle with FauFTBParams {
-    val pred_way = UInt(log2Ceil(numWays).W)
+    val pred_way = if (!env.FPGAPlatform) Some(UInt(log2Ceil(numWays).W)) else None
     val hit = Bool()
   }
-  val resp_meta = Wire(new FauFTBMeta)
-  override val meta_size = resp_meta.getWidth
+  val respMeta = Wire(new FauFTBMeta)
+  override val meta_size = respMeta.getWidth
   override val is_fast_pred = true
 
-  class FauFTBBank(implicit p: Parameters) extends XSModule with FauFTBParams {
-    val io = IO(new Bundle {
-      val req_tag = Input(UInt(tagSize.W))
-      val resp_hit_oh = Output(Vec(numWays, Bool()))
-      val resp_entries = Output(Vec(numWays, new FTBEntry))
-      val resp_ctrs = Output(Vec(numWays, Vec(numBr, UInt(2.W))))
-      val update_req_tag = Input(UInt(tagSize.W))
-      val update_hit_oh = Output(Vec(numWays, Bool()))
+  private val ways = Seq.fill(numWays)(Module(new FauFTBWay))
+  private val ctrs = Seq.fill(numWays)(RegInit(2.U(2.W)))
+  
+  private val replacer = ReplacementPolicy.fromString("plru", numWays)
+  private val replacerTouchWays = Wire(Vec(2, Valid(UInt(log2Ceil(numWays).W))))
 
-      val write_valid_oh = Input(Vec(numWays, Bool()))
-      val write_tag = Input(UInt(tagSize.W))
-      val write_entry = Input(new FTBEntry)
+  /** Prediction
+   * FauFtb's bank prediction require by pc only,
+   * response all entries, hit one-hot and counters
+   * which construct the stage one of [[FullBranchPrediction]].
+   */
 
-      val write_ctrs_valid = Input(Vec(numWays, Vec(numBr, Bool())))
-      val write_ctrs = Input(Vec(numWays, Vec(numBr, UInt(2.W))))
-    })
+  private val s1_fire = io.s1_fire(dupForUbtb)
+  private val s1_pc = s1_pc_dup(dupForUbtb)
 
-    val ways = Seq.tabulate(numWays)(w => Module(new FauFTBWay))
-    // numWays * numBr
-    val ctrs = Seq.tabulate(numWays)(w => Seq.tabulate(numBr)(b => RegInit(2.U(2.W))))
+  ways.foreach(_.io.reqTag := getTag(s1_pc))
 
-    // pred req
-    ways.foreach(_.io.req_tag := io.req_tag)
+  private val s1_entry = ways.map(_.io.resp)
+  private val s1_hitOH: UInt = VecInit(ways.map(_.io.respHit)).asUInt
+  private val s1_hit: Bool = s1_hitOH.orR
+  private val s1_hitWay: UInt = OHToUInt(s1_hitOH)
+  private val s1_predCandidate: Vec[FullBranchPrediction] = Wire(Vec(numWays, new FullBranchPrediction))
 
-    // pred resp
-    io.resp_hit_oh  := VecInit(ways.map(_.io.resp_hit))
-    io.resp_entries := VecInit(ways.map(_.io.resp))
-    io.resp_ctrs    := VecInit(ctrs.map(VecInit(_)))
-
-    // update req
-    ways.foreach(_.io.update_req_tag := io.update_req_tag)
-    io.update_hit_oh := VecInit(ways.map(_.io.update_hit))
-
-    // write req
-    ways.zip(io.write_valid_oh).foreach{ case (w, v) => w.io.write_valid := v }
-    ways.foreach(_.io.write_tag   := io.write_tag)
-    ways.foreach(_.io.write_entry := io.write_entry)
-
-    // write ctrs
-    for (ctr & valid & w_ctr <- ctrs zip io.write_ctrs_valid zip io.write_ctrs) {
-      for (c & v & w_c <- ctr zip valid zip w_ctr) {
-        when (v) {
-          c := w_c
-        }
-      }
-    }
+  ctrs zip s1_entry zip s1_predCandidate foreach { case((ctr, entry), pred) =>
+    pred.hit := DontCare
+    pred.br_taken := ctr(1) || entry.alwaysTaken
+    pred.fromFtbEntry(entry, s1_pc)
   }
 
-  // bank 1 for tage, bank 0 for others
-  val banks = Seq.fill(numDup_local)(Module(new FauFTBBank))
-  banks.foreach(b => dontTouch(b.io))
+  private val s1_hitPred: FullBranchPrediction = Mux1H(s1_hitOH, s1_predCandidate)
   
-  val replacer = Seq.fill(numDup_local)(ReplacementPolicy.fromString("plru", numWays))
-  val replacer_touch_ways = Wire(Vec(numDup_local, Vec(2, Valid(UInt(log2Ceil(numWays).W)))))
-
-  val s1_fire_dup = Wire(Vec(numDup_local, Bool()))
-  s1_fire_dup(0) := io.s1_fire(dupForUbtb)
-  //s1_fire_dup(1) := io.s1_fire(special_idx_for_dup)
+  XSError(PopCount(s1_hitOH) > 1.U, "fauFtb has multiple hits!\n")
   
-  // pred req
-  banks(0).io.req_tag := getTag(s1_pc_dup(dupForUbtb))
-  //banks(1).io.req_tag := getTag(s1_pc_dup(special_idx_for_dup))
+  io.out.s1.fullPred.foreach(_ := s1_hitPred)
+  io.out.s1.fullPred.zip(fauftbEnable).foreach {case (fp, en) => fp.hit := s1_hit && en}
 
-  // pred resp
-  val s1_hit_oh_dup = VecInit(banks.map(_.io.resp_hit_oh.asUInt))
-  val s1_hit_dup = s1_hit_oh_dup.map(_.orR)
-  val s1_hit_way_dup = s1_hit_oh_dup.map(OHToUInt(_))
-  val s1_possible_full_preds_dup = Wire(Vec(numDup_local, Vec(numWays, new FullBranchPrediction)))
-  
-  val s1_all_entries_dup = VecInit(banks.map(_.io.resp_entries))
-  for (b <- 0 until numDup_local) {
-    for (w <- 0 until numWays) {
-      val fp = s1_possible_full_preds_dup(b)(w)
-      val entry = s1_all_entries_dup(b)(w)
-      val s1_pc = if (b == 0) s1_pc_dup(dupForUbtb) else s1_pc_dup(special_idx_for_dup)
-      fp.fromFtbEntry(entry, s1_pc)
-      fp.hit := DontCare
-      for (i <- 0 until numBr) {
-        val ctr = banks(b).io.resp_ctrs(w)(i)
-        fp.br_taken_mask(i) := ctr(1) || entry.always_taken(i)
-      }
-    }
+  respMeta.hit := RegEnable(RegEnable(s1_hit, io.s1_fire(dupForUbtb)), io.s2_fire(dupForUbtb))
+  if(respMeta.pred_way.isDefined) {respMeta.pred_way.get := RegEnable(RegEnable(s1_hitWay, io.s1_fire(0)), io.s2_fire(0))}
+  io.out.lastStageMeta := respMeta.asUInt
 
-    // pred update replacer state
-    replacer_touch_ways(b)(0).valid := RegNext(s1_fire_dup(b) && s1_hit_dup(b))
-    replacer_touch_ways(b)(0).bits  := RegEnable(s1_hit_way_dup(b), s1_fire_dup(b) && s1_hit_dup(b))
-
-  }
-
-  val s1_hit_full_pred_dup = s1_hit_oh_dup.zip(s1_possible_full_preds_dup).map(t => Mux1H(t._1, t._2))
-  XSError(PopCount(s1_hit_oh_dup(0)) > 1.U, "fauftb has multiple hits!\n")
-  val fauftb_enable_dup = RegNext(dup(io.ctrl.ubtb_enable))
-
-  io.out.s1.full_pred.map(_ := s1_hit_full_pred_dup(0))
-  io.out.s1.full_pred.zip(fauftb_enable_dup).map {case (fp, en) => fp.hit := s1_hit_dup(0) && en}
-  io.out.s1.full_pred(special_idx_for_dup) := s1_hit_full_pred_dup(0)
-  io.out.s1.full_pred(special_idx_for_dup).hit := s1_hit_dup(0) && fauftb_enable_dup(special_idx_for_dup)
+  private val s1_ftbEntry = Mux1H(s1_hitOH, s1_entry)
+  io.out.lastStageFtbEntry := RegEnable(RegEnable(s1_ftbEntry, io.s1_fire(dupForUbtb)), io.s2_fire(dupForUbtb))
 
   for (i <- 1 until numDup) {
-    XSError(io.out.s1.full_pred(i).asUInt =/= io.out.s1.full_pred(0).asUInt,
-      p"fauftb s1 pred $i differs from pred 0\n")
+    XSError(io.out.s1.fullPred(i).asUInt =/= io.out.s1.fullPred(0).asUInt,
+      p"fauFtb s1 pred $i differs from pred 0\n")
   }
 
-  // assign metas
-  io.out.last_stage_meta := resp_meta.asUInt
-  resp_meta.hit := RegEnable(RegEnable(s1_hit_dup(0), io.s1_fire(dupForUbtb)), io.s2_fire(dupForUbtb))
-  resp_meta.pred_way := RegEnable(RegEnable(s1_hit_way_dup(0), io.s1_fire(dupForUbtb)), io.s2_fire(dupForUbtb))
-
-
-  val s1_ftb_entry = Mux1H(s1_hit_oh_dup(0), s1_all_entries_dup(0))
-  io.out.last_stage_ftb_entry := RegEnable(RegEnable(s1_ftb_entry, io.s1_fire(dupForUbtb)), io.s2_fire(dupForUbtb))
-
-
-
-
-  /********************** update ***********************/
-  // s0: update_valid, read and tag comparison
-  // s1: alloc_way and write
+  /** Update
+   * Two-cycle consumption at update.
+   * First cycle: read fauFtb entries and compares tag.
+   * Second cycle: write the entries to the hit way or alloc way and update counter.
+   * */
 
   // s0
-  val us = Wire(Vec(numDup_local, io.update(0).cloneType))
-  val u_valids = Wire(Vec(numDup_local, Bool()))
-  u_valids(0) := io.update(dupForUbtb).valid
-  //u_valids(1) := io.update(dupForTageSC).valid
-  us(0) := io.update(dupForUbtb)
-  //us(1) := io.update(dupForTageSC)
-  val u_meta_dup = us.map(_.bits.meta.asTypeOf(new FauFTBMeta))
-  val u_s0_tag_dup = us.map(u => getTag(u.bits.pc))
-  for (b <- 0 until numDup_local) {
-    banks(b).io.update_req_tag := u_s0_tag_dup(b)
-  }
-  val u_s0_hit_oh_dup = VecInit(banks.map(_.io.update_hit_oh.asUInt))
-  val u_s0_hit_dup = u_s0_hit_oh_dup.map(_.orR)
-  val u_s0_br_update_valids_dup = VecInit(us.map(u =>
-    VecInit((0 until numBr).map(w =>
-      u.bits.ftb_entry.brValids(w) && u.valid && !u.bits.ftb_entry.always_taken(w) &&
-      !(PriorityEncoder(u.bits.br_taken_mask) < w.U)))
-  ))
+  private val us = io.update(dupForUbtb)
+  private val u_meta = us.bits.meta.asTypeOf(new FauFTBMeta)
+  private val u_s0_tag = getTag(us.bits.pc)
+
+  ways.foreach(_.io.updateReqTag := u_s0_tag)
+  private val u_s0_hitOH = VecInit(ways.map(_.io.updateHit)).asUInt
+  private val u_s0_hit = u_s0_hitOH.orR
+  private val u_s0_brUpdateValid = us.bits.ftbEntry.brValid && us.valid && !us.bits.ftbEntry.alwaysTaken
+
   // s1
-  val u_s1_valid_dup = us.map(u => RegNext(dup(u.valid, numWays+1))) // reduce fanouts
-  val u_s1_tag_dup       = u_valids.zip(u_s0_tag_dup).map {case (v, tag) => RegEnable(tag, v)}
-  val u_s1_hit_oh_dup    = u_valids.zip(u_s0_hit_oh_dup).map {case (v, oh) => RegEnable(oh, v)}
-  val u_s1_hit_dup       = u_valids.zip(u_s0_hit_dup).map {case (v, h) => RegEnable(h, v)}
-  val u_s1_alloc_way_dup = replacer.map(_.way)
-  val u_s1_write_way_oh_dup =
-    for (u_s1_hit & u_s1_hit_oh & u_s1_alloc_way <- u_s1_hit_dup zip u_s1_hit_oh_dup zip u_s1_alloc_way_dup)
-      yield Mux(u_s1_hit, u_s1_hit_oh, UIntToOH(u_s1_alloc_way))
-  val u_s1_ftb_entry_dup = us.map(u => RegEnable(u.bits.ftb_entry, u.valid))
-  val u_s1_ways_write_valid_dup = Wire(Vec(numDup_local, Vec(numWays, Bool())))
-  for (b <- 0 until numDup_local) {
-    u_s1_ways_write_valid_dup(b) := VecInit((0 until numWays).map(w => u_s1_write_way_oh_dup(b)(w).asBool && u_s1_valid_dup(b)(w)))
-    for (w <- 0 until numWays) {
-      banks(b).io.write_valid_oh(w) := u_s1_ways_write_valid_dup(b)(w)
-      banks(b).io.write_tag         := u_s1_tag_dup(b)
-      banks(b).io.write_entry       := u_s1_ftb_entry_dup(b)
-    }
-  }
+  private val u_s1_valid    = RegNext(dup(us.valid, numWays + 1)) // duplicate for replacer
+  private val u_s1_tag      = RegEnable(u_s0_tag, us.valid)
+  private val u_s1_hitOH    = RegEnable(u_s0_hitOH, us.valid)
+  private val u_s1_hit      = RegEnable(u_s0_hit, us.valid)
+  private val u_s1_ftbEntry = RegEnable(us.bits.ftbEntry, us.valid)
+  private val u_s1_brTaken  = RegEnable(us.bits.br_taken, us.valid)
+  private val u_s1_brUpdateValid = RegEnable(u_s0_brUpdateValid, us.valid)
 
-  // update saturating counters
-  val u_s1_br_update_valids_dup = us.zip(u_s0_br_update_valids_dup).map {case (u, bruv) => RegEnable(bruv, u.valid)}
-  val u_s1_br_takens_dup        = us.map(u => RegEnable(u.bits.br_taken_mask,  u.valid))
+  private val u_s1_allocWay   = replacer.way
+  private val u_s1_writeWayOH = Mux(u_s1_hit, u_s1_hitOH, UIntToOH(u_s1_allocWay))
+  private val u_s1_writeValidOH = u_s1_writeWayOH.asBools.zipWithIndex.map{ case (way, i) => way && u_s1_valid(i) }
 
+  ways.zip(u_s1_writeValidOH).foreach{ case (w,v) => w.io.writeValid := v }
+  ways.foreach(_.io.writeTag := u_s1_tag)
+  ways.foreach(_.io.writeEntry := u_s1_ftbEntry)
 
-  for (b <- 0 until numDup_local) {
-    for (w <- 0 until numWays) {
-      for (br <- 0 until numBr) {
-        banks(b).io.write_ctrs(w)(br) := satUpdate(banks(b).io.resp_ctrs(w)(br), 2, u_s1_br_takens_dup(b)(br))
-        banks(b).io.write_ctrs_valid(w)(br) := u_s1_br_update_valids_dup(b)(br) && u_s1_ways_write_valid_dup(b)(w)
+  when(u_s1_brUpdateValid){
+    ctrs.zip(u_s1_writeValidOH).foreach { case (ctr, v) =>
+      when(v) {
+        ctr := satUpdate(ctr, len = 2, u_s1_brTaken)
       }
     }
-    // commit update replacer state
-    replacer_touch_ways(b)(1).valid := u_s1_valid_dup(b).last
-    replacer_touch_ways(b)(1).bits  := OHToUInt(u_s1_write_way_oh_dup(b))
-    /******** update replacer *********/
-    replacer(b).access(replacer_touch_ways(b))
   }
 
+  /** Replacer
+   * Replacer will touch the ways which prediction hit and update write.
+   * Replacer will give the eviction way to [[u_s1_allocWay]]
+   */
+  replacerTouchWays(0).valid := RegNext(s1_fire && s1_hit)
+  replacerTouchWays(0).bits  := RegEnable(s1_hitWay, s1_fire && s1_hit)
+  replacerTouchWays(1).valid := u_s1_valid.last
+  replacerTouchWays(1).bits  := OHToUInt(u_s1_writeWayOH)
+  replacer.access(replacerTouchWays)
 
-
-  /********************** perf counters **********************/
+  /** Performance counters */
   val s0_fire_next_cycle = RegNext(io.s0_fire(dupForUbtb))
-  val u_pred_hit_way_map   = (0 until numWays).map(w => s0_fire_next_cycle && s1_hit_dup(0) && s1_hit_way_dup(0) === w.U)
-  val u_commit_hit_way_map = (0 until numWays).map(w => us(0).valid && u_meta_dup(0).hit && u_meta_dup(0).pred_way === w.U)
-  XSPerfAccumulate("uftb_read_hits",   s0_fire_next_cycle &&  s1_hit_dup(0))
-  XSPerfAccumulate("uftb_read_misses", s0_fire_next_cycle && !s1_hit_dup(0))
-  XSPerfAccumulate("uftb_commit_hits",   us(0).valid &&  u_meta_dup(0).hit)
-  XSPerfAccumulate("uftb_commit_misses", us(0).valid && !u_meta_dup(0).hit)
-  XSPerfAccumulate("uftb_commit_read_hit_pred_miss", us(0).valid && !u_meta_dup(0).hit && u_s0_hit_oh_dup(0).orR)
+  val u_pred_hit_way_map   = (0 until numWays).map(w => s0_fire_next_cycle && s1_hit && s1_hitWay === w.U)
+  if(u_meta.pred_way.isDefined) {
+    val u_commit_hit_way_map = (0 until numWays).map(w => us.valid && u_meta.hit && u_meta.pred_way.get === w.U)
+    for (w <- 0 until numWays) {
+      XSPerfAccumulate(f"uftb_commit_hit_way_${w}", u_commit_hit_way_map(w))
+    }
+  }
+
+  XSPerfAccumulate("uftb_read_hits",   s0_fire_next_cycle &&  s1_hit)
+  XSPerfAccumulate("uftb_read_misses", s0_fire_next_cycle && !s1_hit)
+  XSPerfAccumulate("uftb_commit_hits",   us.valid &&  u_meta.hit)
+  XSPerfAccumulate("uftb_commit_misses", us.valid && !u_meta.hit)
+  XSPerfAccumulate("uftb_commit_read_hit_pred_miss", us.valid && !u_meta.hit && u_s0_hitOH(0).orR)
   for (w <- 0 until numWays) {
     XSPerfAccumulate(f"uftb_pred_hit_way_${w}",   u_pred_hit_way_map(w))
-    XSPerfAccumulate(f"uftb_commit_hit_way_${w}", u_commit_hit_way_map(w))
-    XSPerfAccumulate(f"uftb_replace_way_${w}", !u_s1_hit_dup(0) && u_s1_alloc_way_dup(0) === w.U)
+    //XSPerfAccumulate(f"uftb_commit_hit_way_${w}", u_commit_hit_way_map(w))
+    XSPerfAccumulate(f"uftb_replace_way_${w}", !u_s1_hit(0) && u_s1_allocWay(0) === w.U)
   }
 
   override val perfEvents = Seq(
-    ("fauftb_commit_hit       ", us(0).valid &&  u_meta_dup(0).hit),
-    ("fauftb_commit_miss      ", us(0).valid && !u_meta_dup(0).hit),
+    ("fauftb_commit_hit       ", us.valid &&  u_meta.hit),
+    ("fauftb_commit_miss      ", us.valid && !u_meta.hit),
   )
   generatePerfEvent()
   

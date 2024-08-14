@@ -35,7 +35,7 @@ import chisel3.util.BitPat.bitPatToUInt
 import xiangshan.backend.execute.fu.alu.ALUOpType
 import xiangshan.backend.execute.fu.csr.CSROpType
 import xiangshan.backend.execute.fu.fpu.FPUCtrlSignals
-import xiangshan.frontend.Ftq_Redirect_SRAMEntry
+import xiangshan.frontend.FtqRedirectEntry
 import xiangshan.frontend.AllAheadFoldedHistoryOldestBits
 import xs.utils.DataChanged
 import xiangshan.vector._
@@ -69,7 +69,7 @@ class CfiUpdateInfo(implicit p: Parameters) extends XSBundle with HasBPUParamete
   val rasSp = UInt(log2Up(RasSize).W)
   val rasEntry = new RASEntry
   // val hist = new ShiftingGlobalHistory
-  val folded_hist = new AllFoldedHistories(foldedGHistInfos)
+  val foldedHist = new AllFoldedHistories(foldedGHistInfos)
   val afhob = new AllAheadFoldedHistoryOldestBits(foldedGHistInfos)
   val lastBrNumOH = UInt((numBr+1).W)
   val ghr = UInt(UbtbGHRLength.W)
@@ -81,14 +81,10 @@ class CfiUpdateInfo(implicit p: Parameters) extends XSBundle with HasBPUParamete
   val target = UInt(VAddrBits.W)
   val taken = Bool()
   val isMisPred = Bool()
-  val shift = UInt((log2Ceil(numBr)+1).W)
+  val shift = Bool()
   val addIntoHist = Bool()
 
-  def fromFtqRedirectSram(entry: Ftq_Redirect_SRAMEntry) = {
-    // this.hist := entry.ghist
-    this.folded_hist := entry.folded_hist
-    this.lastBrNumOH := entry.lastBrNumOH
-    this.afhob := entry.afhob
+  def fromFtqRedirectMem(entry: FtqRedirectEntry): CfiUpdateInfo = {
     this.histPtr := entry.histPtr
     this.rasSp := entry.rasSp
     this.rasEntry := entry.rasTop
