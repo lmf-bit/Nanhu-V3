@@ -269,76 +269,76 @@ object FDecode extends DecodeConstants{
   FSW     -> List(SrcType.reg, SrcType.fp,  SrcType.DC, FuType.stu, LSUOpType.sw, N, N, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_S),
   FSD     -> List(SrcType.reg, SrcType.fp,  SrcType.DC, FuType.stu, LSUOpType.sd, N, N, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_S),
 
-  FCLASS_S-> List(SrcType.fp , SrcType.imm, SrcType.DC, FuType.f2i, FuOpType.X, Y, N, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FCLASS_D-> List(SrcType.fp , SrcType.imm, SrcType.DC, FuType.f2i, FuOpType.X, Y, N, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
+  FCLASS_S-> List(SrcType.fp , SrcType.imm, SrcType.DC, FuType.f2i, FuOpType.X, Y, N, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FCLASS_D-> List(SrcType.fp , SrcType.imm, SrcType.DC, FuType.f2i, FuOpType.X, Y, N, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
 
-  FMV_D_X -> List(SrcType.reg, SrcType.imm, SrcType.DC, FuType.i2f,   FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FMV_X_D -> List(SrcType.fp , SrcType.imm, SrcType.DC, FuType.f2i,   FuOpType.X, Y, N, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FMV_X_W -> List(SrcType.fp , SrcType.imm, SrcType.DC, FuType.f2i,   FuOpType.X, Y, N, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FMV_W_X -> List(SrcType.reg, SrcType.imm, SrcType.DC, FuType.i2f,   FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
+  FMV_D_X -> List(SrcType.reg, SrcType.imm, SrcType.DC, FuType.i2f,   FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FMV_X_D -> List(SrcType.fp , SrcType.imm, SrcType.DC, FuType.f2i,   FuOpType.X, Y, N, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FMV_X_W -> List(SrcType.fp , SrcType.imm, SrcType.DC, FuType.f2i,   FuOpType.X, Y, N, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FMV_W_X -> List(SrcType.reg, SrcType.imm, SrcType.DC, FuType.i2f,   FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
 
-  FSGNJ_S -> List(SrcType.fp,  SrcType.fp, SrcType.DC, FuType.f2f, FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FSGNJ_D -> List(SrcType.fp,  SrcType.fp, SrcType.DC, FuType.f2f, FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FSGNJX_S-> List(SrcType.fp,  SrcType.fp, SrcType.DC, FuType.f2f, FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FSGNJX_D-> List(SrcType.fp,  SrcType.fp, SrcType.DC, FuType.f2f, FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FSGNJN_S-> List(SrcType.fp,  SrcType.fp, SrcType.DC, FuType.f2f, FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FSGNJN_D-> List(SrcType.fp,  SrcType.fp, SrcType.DC, FuType.f2f, FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
+  FSGNJ_S -> List(SrcType.fp,  SrcType.fp, SrcType.DC, FuType.f2f, FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FSGNJ_D -> List(SrcType.fp,  SrcType.fp, SrcType.DC, FuType.f2f, FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FSGNJX_S-> List(SrcType.fp,  SrcType.fp, SrcType.DC, FuType.f2f, FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FSGNJX_D-> List(SrcType.fp,  SrcType.fp, SrcType.DC, FuType.f2f, FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FSGNJN_S-> List(SrcType.fp,  SrcType.fp, SrcType.DC, FuType.f2f, FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FSGNJN_D-> List(SrcType.fp,  SrcType.fp, SrcType.DC, FuType.f2f, FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
 
   // FP to FP
-  FCVT_S_D-> List(SrcType.fp, SrcType.imm, SrcType.DC, FuType.f2f, FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FCVT_D_S-> List(SrcType.fp, SrcType.imm, SrcType.DC, FuType.f2f, FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
+  FCVT_S_D-> List(SrcType.fp, SrcType.imm, SrcType.DC, FuType.f2f, FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FCVT_D_S-> List(SrcType.fp, SrcType.imm, SrcType.DC, FuType.f2f, FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
 
   // Int to FP
-  FCVT_S_W-> List(SrcType.reg, SrcType.imm, SrcType.DC, FuType.i2f, FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FCVT_S_WU->List(SrcType.reg, SrcType.imm, SrcType.DC, FuType.i2f, FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FCVT_S_L-> List(SrcType.reg, SrcType.imm, SrcType.DC, FuType.i2f, FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FCVT_S_LU->List(SrcType.reg, SrcType.imm, SrcType.DC, FuType.i2f, FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
+  FCVT_S_W-> List(SrcType.reg, SrcType.imm, SrcType.DC, FuType.i2f, FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FCVT_S_WU->List(SrcType.reg, SrcType.imm, SrcType.DC, FuType.i2f, FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FCVT_S_L-> List(SrcType.reg, SrcType.imm, SrcType.DC, FuType.i2f, FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FCVT_S_LU->List(SrcType.reg, SrcType.imm, SrcType.DC, FuType.i2f, FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
 
-  FCVT_D_W-> List(SrcType.reg, SrcType.imm, SrcType.DC, FuType.i2f, FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FCVT_D_WU->List(SrcType.reg, SrcType.imm, SrcType.DC, FuType.i2f, FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FCVT_D_L-> List(SrcType.reg, SrcType.imm, SrcType.DC, FuType.i2f, FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FCVT_D_LU->List(SrcType.reg, SrcType.imm, SrcType.DC, FuType.i2f, FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
+  FCVT_D_W-> List(SrcType.reg, SrcType.imm, SrcType.DC, FuType.i2f, FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FCVT_D_WU->List(SrcType.reg, SrcType.imm, SrcType.DC, FuType.i2f, FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FCVT_D_L-> List(SrcType.reg, SrcType.imm, SrcType.DC, FuType.i2f, FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FCVT_D_LU->List(SrcType.reg, SrcType.imm, SrcType.DC, FuType.i2f, FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
 
   // FP to Int
-  FCVT_W_S-> List(SrcType.fp , SrcType.imm, SrcType.DC, FuType.f2i, FuOpType.X, Y, N, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FCVT_WU_S->List(SrcType.fp , SrcType.imm, SrcType.DC, FuType.f2i, FuOpType.X, Y, N, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FCVT_L_S-> List(SrcType.fp , SrcType.imm, SrcType.DC, FuType.f2i, FuOpType.X, Y, N, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FCVT_LU_S->List(SrcType.fp , SrcType.imm, SrcType.DC, FuType.f2i, FuOpType.X, Y, N, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
+  FCVT_W_S-> List(SrcType.fp , SrcType.imm, SrcType.DC, FuType.f2i, FuOpType.X, Y, N, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FCVT_WU_S->List(SrcType.fp , SrcType.imm, SrcType.DC, FuType.f2i, FuOpType.X, Y, N, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FCVT_L_S-> List(SrcType.fp , SrcType.imm, SrcType.DC, FuType.f2i, FuOpType.X, Y, N, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FCVT_LU_S->List(SrcType.fp , SrcType.imm, SrcType.DC, FuType.f2i, FuOpType.X, Y, N, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
 
-  FCVT_W_D-> List(SrcType.fp , SrcType.imm, SrcType.DC, FuType.f2i, FuOpType.X, Y, N, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FCVT_WU_D->List(SrcType.fp , SrcType.imm, SrcType.DC, FuType.f2i, FuOpType.X, Y, N, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FCVT_L_D-> List(SrcType.fp , SrcType.imm, SrcType.DC, FuType.f2i, FuOpType.X, Y, N, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FCVT_LU_D->List(SrcType.fp , SrcType.imm, SrcType.DC, FuType.f2i, FuOpType.X, Y, N, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
+  FCVT_W_D-> List(SrcType.fp , SrcType.imm, SrcType.DC, FuType.f2i, FuOpType.X, Y, N, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FCVT_WU_D->List(SrcType.fp , SrcType.imm, SrcType.DC, FuType.f2i, FuOpType.X, Y, N, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FCVT_L_D-> List(SrcType.fp , SrcType.imm, SrcType.DC, FuType.f2i, FuOpType.X, Y, N, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FCVT_LU_D->List(SrcType.fp , SrcType.imm, SrcType.DC, FuType.f2i, FuOpType.X, Y, N, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
 
   // "fp_single" is used for wb_data formatting (and debugging)
-  FEQ_S    ->List(SrcType.fp , SrcType.fp, SrcType.DC, FuType.f2i, FuOpType.X, Y, N, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FLT_S    ->List(SrcType.fp , SrcType.fp, SrcType.DC, FuType.f2i, FuOpType.X, Y, N, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FLE_S    ->List(SrcType.fp , SrcType.fp, SrcType.DC, FuType.f2i, FuOpType.X, Y, N, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
+  FEQ_S    ->List(SrcType.fp , SrcType.fp, SrcType.DC, FuType.f2i, FuOpType.X, Y, N, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FLT_S    ->List(SrcType.fp , SrcType.fp, SrcType.DC, FuType.f2i, FuOpType.X, Y, N, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FLE_S    ->List(SrcType.fp , SrcType.fp, SrcType.DC, FuType.f2i, FuOpType.X, Y, N, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
 
-  FEQ_D    ->List(SrcType.fp , SrcType.fp, SrcType.DC, FuType.f2i, FuOpType.X, Y, N, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FLT_D    ->List(SrcType.fp , SrcType.fp, SrcType.DC, FuType.f2i, FuOpType.X, Y, N, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FLE_D    ->List(SrcType.fp , SrcType.fp, SrcType.DC, FuType.f2i, FuOpType.X, Y, N, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
+  FEQ_D    ->List(SrcType.fp , SrcType.fp, SrcType.DC, FuType.f2i, FuOpType.X, Y, N, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FLT_D    ->List(SrcType.fp , SrcType.fp, SrcType.DC, FuType.f2i, FuOpType.X, Y, N, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FLE_D    ->List(SrcType.fp , SrcType.fp, SrcType.DC, FuType.f2i, FuOpType.X, Y, N, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
 
-  FMIN_S   ->List(SrcType.fp,  SrcType.fp, SrcType.DC, FuType.f2f, FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FMAX_S   ->List(SrcType.fp,  SrcType.fp, SrcType.DC, FuType.f2f, FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FMIN_D   ->List(SrcType.fp,  SrcType.fp, SrcType.DC, FuType.f2f, FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FMAX_D   ->List(SrcType.fp,  SrcType.fp, SrcType.DC, FuType.f2f, FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
+  FMIN_S   ->List(SrcType.fp,  SrcType.fp, SrcType.DC, FuType.f2f, FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FMAX_S   ->List(SrcType.fp,  SrcType.fp, SrcType.DC, FuType.f2f, FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FMIN_D   ->List(SrcType.fp,  SrcType.fp, SrcType.DC, FuType.f2f, FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FMAX_D   ->List(SrcType.fp,  SrcType.fp, SrcType.DC, FuType.f2f, FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
 
-  FADD_S   ->List(SrcType.fp,  SrcType.fp, SrcType.DC, FuType.fmac, FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FSUB_S   ->List(SrcType.fp,  SrcType.fp, SrcType.DC, FuType.fmac, FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FMUL_S   ->List(SrcType.fp,  SrcType.fp, SrcType.DC, FuType.fmac, FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FADD_D   ->List(SrcType.fp,  SrcType.fp, SrcType.DC, FuType.fmac, FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FSUB_D   ->List(SrcType.fp,  SrcType.fp, SrcType.DC, FuType.fmac, FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FMUL_D   ->List(SrcType.fp,  SrcType.fp, SrcType.DC, FuType.fmac, FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
+  FADD_S   ->List(SrcType.fp,  SrcType.fp, SrcType.DC, FuType.fmac, FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FSUB_S   ->List(SrcType.fp,  SrcType.fp, SrcType.DC, FuType.fmac, FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FMUL_S   ->List(SrcType.fp,  SrcType.fp, SrcType.DC, FuType.fmac, FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FADD_D   ->List(SrcType.fp,  SrcType.fp, SrcType.DC, FuType.fmac, FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FSUB_D   ->List(SrcType.fp,  SrcType.fp, SrcType.DC, FuType.fmac, FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FMUL_D   ->List(SrcType.fp,  SrcType.fp, SrcType.DC, FuType.fmac, FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
 
-  FMADD_S  ->List(SrcType.fp,  SrcType.fp, SrcType.fp, FuType.fmac, FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FMSUB_S  ->List(SrcType.fp,  SrcType.fp, SrcType.fp, FuType.fmac, FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FNMADD_S ->List(SrcType.fp,  SrcType.fp, SrcType.fp, FuType.fmac, FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FNMSUB_S ->List(SrcType.fp,  SrcType.fp, SrcType.fp, FuType.fmac, FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FMADD_D  ->List(SrcType.fp,  SrcType.fp, SrcType.fp, FuType.fmac, FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FMSUB_D  ->List(SrcType.fp,  SrcType.fp, SrcType.fp, FuType.fmac, FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FNMADD_D ->List(SrcType.fp,  SrcType.fp, SrcType.fp, FuType.fmac, FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-  FNMSUB_D ->List(SrcType.fp,  SrcType.fp, SrcType.fp, FuType.fmac, FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X)
+  FMADD_S  ->List(SrcType.fp,  SrcType.fp, SrcType.fp, FuType.fmac, FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FMSUB_S  ->List(SrcType.fp,  SrcType.fp, SrcType.fp, FuType.fmac, FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FNMADD_S ->List(SrcType.fp,  SrcType.fp, SrcType.fp, FuType.fmac, FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FNMSUB_S ->List(SrcType.fp,  SrcType.fp, SrcType.fp, FuType.fmac, FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FMADD_D  ->List(SrcType.fp,  SrcType.fp, SrcType.fp, FuType.fmac, FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FMSUB_D  ->List(SrcType.fp,  SrcType.fp, SrcType.fp, FuType.fmac, FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FNMADD_D ->List(SrcType.fp,  SrcType.fp, SrcType.fp, FuType.fmac, FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+  FNMSUB_D ->List(SrcType.fp,  SrcType.fp, SrcType.fp, FuType.fmac, FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X)
   )
 }
 
@@ -404,10 +404,10 @@ object FDIDecode extends DecodeConstants {
  */
 object FDivSqrtDecode extends DecodeConstants {
   val table: Array[(BitPat, List[BitPat])] = Array(
-    FDIV_S    ->List(SrcType.fp,  SrcType.fp,  SrcType.DC, FuType.fDivSqrt, FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-    FDIV_D    ->List(SrcType.fp,  SrcType.fp,  SrcType.DC, FuType.fDivSqrt, FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-    FSQRT_S   ->List(SrcType.fp,  SrcType.imm, SrcType.DC, FuType.fDivSqrt, FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X),
-    FSQRT_D   ->List(SrcType.fp,  SrcType.imm, SrcType.DC, FuType.fDivSqrt, FuOpType.X, N, Y, N, N, N, N, N, Y, N, VstartType.hold, SelImm.IMM_X)
+    FDIV_S    ->List(SrcType.fp,  SrcType.fp,  SrcType.DC, FuType.fDivSqrt, FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+    FDIV_D    ->List(SrcType.fp,  SrcType.fp,  SrcType.DC, FuType.fDivSqrt, FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+    FSQRT_S   ->List(SrcType.fp,  SrcType.imm, SrcType.DC, FuType.fDivSqrt, FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X),
+    FSQRT_D   ->List(SrcType.fp,  SrcType.imm, SrcType.DC, FuType.fDivSqrt, FuOpType.X, N, Y, N, N, N, N, N, N, N, VstartType.hold, SelImm.IMM_X)
   )
 }
 /*
