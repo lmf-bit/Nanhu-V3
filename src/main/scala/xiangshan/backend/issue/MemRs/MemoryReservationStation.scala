@@ -207,7 +207,7 @@ class MemoryReservationStationImpl(outer:MemoryReservationStation, param:RsParam
 
   private val staSelectNetwork = Module(new HybridSelectNetwork(param.bankNum, entriesNumPerBank, staIssuePortNum, staExuCfg, true, Some(s"MemStaSelNetwork")))
   private val stdSelectNetwork = Module(new HybridSelectNetwork(param.bankNum, entriesNumPerBank, stdIssuePortNum, stdExuCfg, true, Some(s"MemStdSelNetwork")))
-  private val lduSelectNetwork = Module(new HybridSelectNetwork(param.bankNum, entriesNumPerBank, lduIssuePortNum, lduExuCfg, true, Some(s"MemLduSelNetwork")))
+  private val lduSelectNetwork = Module(new OldestSelectNetwork_TMP(param.bankNum, entriesNumPerBank, lduIssuePortNum, lduExuCfg, true, Some(s"MemLduSelNetwork")))
 
   private val uopReadNum = stIssue.length + ldIssue.length
   require(uopReadNum == 4)
@@ -307,15 +307,15 @@ class MemoryReservationStationImpl(outer:MemoryReservationStation, param:RsParam
 //      val selectedBanks = rsBankSeq
       val bankEns = getSlice(lduSelectNetwork.io.issueInfo(ldIssuePortIdx).bits.bankIdxOH.asBools).map(_ && loadIssueDriver.io.enq.fire)
       //      val bankPayloads = Wire(Vec(3, new MicroOp))
-      for ((b, en) <- selectedBanks.zip(bankEns)) {
-        b.io.loadIssue.valid := en && loadIssueDriver.io.enq.fire
-        b.io.loadIssue.bits := lduSelectNetwork.io.issueInfo(ldIssuePortIdx).bits.entryIdxOH
-        b.io.auxLoadIssValid := en && loadIssueDriver.io.enq.fire
+      for ((bank,idx) <- rsBankSeq.zipWithIndex) {
+        bank.io.loadIssue(ldIssuePortIdx).valid := loadIssueDriver.io.enq.fire && loadIssueDriver.io.enq.bits.selectResp.bankIdxOH(idx)
+        bank.io.loadIssue(ldIssuePortIdx).bits := lduSelectNetwork.io.issueInfo(ldIssuePortIdx).bits.entryIdxOH
+        bank.io.auxLoadIssValid := loadIssueDriver.io.enq.fire
 
-        b.io.specialIssue.valid := false.B
-        b.io.specialIssue.bits := DontCare
+        bank.io.specialIssue.valid := false.B
+        bank.io.specialIssue.bits := DontCare
 
-        b.io.auxSLoadIssValid := false.B
+        bank.io.auxSLoadIssValid := false.B
       }
 
       rsBankSeq.foreach(_.io.issueRead(uopReadPortIdx) := loadIssueDriver.io.deq.bits.entryIdxOH)

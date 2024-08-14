@@ -41,7 +41,7 @@ class MemoryReservationBank(entryNum:Int, stuNum:Int, wakeupWidth:Int, regWkpIdx
 
     val enq = Input(Valid(new MicroOp))
 
-    val loadIssue = Input(Valid(UInt(entryNum.W)))
+    val loadIssue = Input(Vec(loadUnitNum, Valid(UInt(entryNum.W))))
     val loadUop = Output(new MicroOp)
     val staIssue = Input(Valid(UInt(entryNum.W)))
     val staUop = Output(new MicroOp)
@@ -140,11 +140,14 @@ class MemoryReservationBank(entryNum:Int, stuNum:Int, wakeupWidth:Int, regWkpIdx
   io.alloc := statusArray.io.alloc
   statusArray.io.enq.valid := io.enq.valid
   statusArray.io.enq.bits:= EnqToEntry(io.enq.bits)
-  statusArray.io.staLduIssue.valid := io.loadIssue.valid || io.staIssue.valid || io.specialIssue.valid
+//  statusArray.io.staLduIssue.valid := io.loadIssue.valid || io.staIssue.valid || io.specialIssue.valid
+  statusArray.io.lduIssue := io.loadIssue
+  statusArray.io.staIssue := io.staIssue
+
   statusArray.io.stdIssue.valid := io.stdIssue.valid
   statusArray.io.stdHasIssue := io.stdHasIssue
 
-  statusArray.io.staLduIssue.bits := Seq(io.loadIssue, io.staIssue, io.specialIssue).map(e => Mux(e.valid, e.bits, 0.U)).reduce(_|_)
+//  statusArray.io.staLduIssue.bits := Seq(io.loadIssue, io.staIssue, io.specialIssue).map(e => Mux(e.valid, e.bits, 0.U)).reduce(_|_)
   statusArray.io.stdIssue.bits := io.stdIssue.bits
   statusArray.io.replay := io.replay
   statusArray.io.stIssued.zip(io.stIssued).foreach({case(a, b) => a := Pipe(b)})
@@ -176,7 +179,13 @@ class MemoryReservationBank(entryNum:Int, stuNum:Int, wakeupWidth:Int, regWkpIdx
   io.stdUop   := DontCare
   io.sLoadUop := DontCare
 
-  when(io.loadIssue.valid){assert(PopCount(io.loadIssue.bits) === 1.U)}
+  io.loadIssue.foreach({case a => {
+    when(a.valid){
+      assert(PopCount(a.bits) === 1.U)
+    }
+  }})
+
+
   when(io.staIssue.valid){assert(PopCount(io.staIssue.bits) === 1.U)}
   when(io.stdIssue.valid){assert(PopCount(io.stdIssue.bits) === 1.U)}
   when(io.specialIssue.valid){assert(PopCount(io.specialIssue.bits) === 1.U)}

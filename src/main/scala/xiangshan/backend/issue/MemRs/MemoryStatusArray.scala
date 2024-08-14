@@ -373,7 +373,10 @@ class MemoryStatusArray(entryNum:Int, stuNum:Int, wakeupWidth:Int, regWkpIdx:Seq
     val enq = Input(Valid(new MemoryStatusArrayEntry))
     val enqAddr = Output(UInt(entryNum.W))
 
-    val staLduIssue = Input(Valid(UInt(entryNum.W)))
+//    val staLduIssue = Input(Valid(UInt(entryNum.W)))
+    val lduIssue = Input(Vec(loadUnitNum, Valid(UInt(entryNum.W))))
+    val staIssue = Input(Valid(UInt(entryNum.W)))
+
     val stdIssue = Input(Valid(UInt(entryNum.W)))
     val wakeups = Input(Vec(wakeupWidth, Valid(new WakeUpInfo)))
     val loadEarlyWakeup = Input(Vec(loadUnitNum, Valid(new EarlyWakeUpInfo)))
@@ -386,6 +389,7 @@ class MemoryStatusArray(entryNum:Int, stuNum:Int, wakeupWidth:Int, regWkpIdx:Seq
 
   private val statusArray = Reg(Vec(entryNum, new MemoryStatusArrayEntry))
   private val statusArrayValid = RegInit(VecInit(Seq.fill(entryNum)(false.B)))
+  private val staLduIssue = Seq(io.staIssue) ++ io.lduIssue
 
   //Start of select logic
   private val selInfoOut = Seq(io.staSelectInfo, io.stdSelectInfo, io.lduSelectInfo)
@@ -424,7 +428,7 @@ class MemoryStatusArray(entryNum:Int, stuNum:Int, wakeupWidth:Int, regWkpIdx:Seq
     updateNetwork.io.entry.bits := d
     updateNetwork.io.enq.valid := io.enq.valid & allocAddrReg(idx)
     updateNetwork.io.enq.bits := io.enq.bits
-    updateNetwork.io.staLduIssue := io.staLduIssue.valid && io.staLduIssue.bits(idx)
+    updateNetwork.io.staLduIssue := staLduIssue.map({ case a => a.valid && a.bits(idx) }).reduce(_|_)
     updateNetwork.io.stdIssue := io.stdIssue.valid && io.stdIssue.bits(idx)
     updateNetwork.io.wakeups := io.wakeups
     updateNetwork.io.loadEarlyWakeup := io.loadEarlyWakeup
@@ -451,8 +455,17 @@ class MemoryStatusArray(entryNum:Int, stuNum:Int, wakeupWidth:Int, regWkpIdx:Seq
 
   when(io.enq.valid){assert(PopCount(allocAddrReg) === 1.U)}
   assert((Mux(io.enq.valid, allocAddrReg, 0.U) & Cat(statusArrayValid.reverse)) === 0.U)
-  private val issues = Seq(io.staLduIssue, io.stdIssue)
-  for(iss <- issues){
-    when(iss.valid){assert((PopCount(iss.bits & Cat(statusArrayValid.reverse)) <= 2.U) && (iss.bits & Cat(statusArrayValid.reverse)).orR)}
+
+  for(i <- 0 until staLduIssue.length){
+    for(j <- (i + 1) until staLduIssue.length){
+      when(staLduIssue(i).valid && staLduIssue(j).valid){
+        assert(staLduIssue(i).bits =/= staLduIssue(j).bits)
+      }
+    }
   }
+
+//  private val issues = Seq(io.staIssue, io.stdIssue) ++ io.lduIssue
+//  for(iss <- issues){
+//    when(iss.valid){assert((PopCount(iss.bits & Cat(statusArrayValid.reverse)) <= 2.U) && (iss.bits & Cat(statusArrayValid.reverse)).orR)}
+//  }
 }
