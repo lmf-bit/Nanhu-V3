@@ -53,27 +53,12 @@ class MemDispatch2Rs(implicit p: Parameters) extends XSModule{
   private val isLs = fuType.map(f => FuType.isLoadStore(f))
   private val isStore = fuType.map(f => FuType.isStore(f))
 
-  private def isBlocked(index: Int): Bool = {
-    if (index >= 2) {
-      val pairs = (0 until index).flatMap(i => (i + 1 until index).map(j => (i, j)))
-      val foundLoad = pairs.map(x => io.in(x._1).valid && io.in(x._2).valid && !isStore(x._1) && !isStore(x._2)).reduce(_|_)
-      val foundStore = pairs.map(x => io.in(x._1).valid && io.in(x._2).valid && isStore(x._1) && isStore(x._2)).reduce(_|_)
-      val shouldBlockHere = Mux(isStore(index), foundStore, foundLoad) && io.in(index).valid
-      //When instructions before are blocked, block this and successors.
-      shouldBlockHere || isBlocked(index - 1)
-    }
-    else {
-      false.B
-    }
-  }
-
   for (i <- io.in.indices) {
     enqCtrl.needAlloc(i) := Mux(io.in(i).valid && isLs(i), Mux(isStore(i), 2.U, 1.U), 0.U)
     enqCtrl.req(i).valid := io.out(i).fire
     enqCtrl.req(i).bits := io.in(i).bits
 
-    is_blocked(i) := isBlocked(i)
-    io.out(i).valid := io.in(i).valid && !is_blocked(i) && enqCtrl.canAccept
+    io.out(i).valid := io.in(i).valid && enqCtrl.canAccept
     io.out(i).bits := io.in(i).bits
     io.out(i).bits.lqIdx := enqCtrl.resp(i).lqIdx
     io.out(i).bits.sqIdx := enqCtrl.resp(i).sqIdx

@@ -536,8 +536,8 @@ class FusionDecoder(implicit p: Parameters) extends XSModule with HasPerfLogging
       new FusedLogicZexth(pair)
     )
     val fire = io.in(i).valid && io.inReady(i)
-    val instrPairValid = RegEnable(VecInit(pair.map(_.valid)).asUInt.andR, false.B, io.inReady(i))
-    val fusionVec = RegEnable(VecInit(fusionList.map(_.isValid)), fire)
+    val instrPairValid = VecInit(pair.map(_.valid)).asUInt.andR
+    val fusionVec = VecInit(fusionList.map(_.isValid))
     val thisCleared = io.clear(i)
     out.valid := instrPairValid && !thisCleared && fusionVec.asUInt.orR
     XSError(instrPairValid && PopCount(fusionVec) > 1.U, "more then one fusion matched\n")
@@ -581,11 +581,11 @@ class FusionDecoder(implicit p: Parameters) extends XSModule with HasPerfLogging
     val src2WithZero = VecInit(fusionVec.zip(fusionList.map(_.lsrc2NeedZero)).filter(_._2).map(_._1)).asUInt.orR
     val src2WithMux = VecInit(fusionVec.zip(fusionList.map(_.lsrc2NeedMux)).filter(_._2).map(_._1)).asUInt.orR
     io.info(i).rs2FromZero := src2WithZero
-    io.info(i).rs2FromRs1 := src2WithMux && !RegEnable(fusionList.head.destToRs1, fire)
-    io.info(i).rs2FromRs2 := src2WithMux && RegEnable(fusionList.head.destToRs1, fire)
+    io.info(i).rs2FromRs1 := src2WithMux && !fusionList.head.destToRs1
+    io.info(i).rs2FromRs2 := src2WithMux && fusionList.head.destToRs1
     out.bits.lsrc2.valid := src2WithMux || src2WithZero
     when (src2WithMux) {
-      out.bits.lsrc2.bits := RegEnable(fusionList.head.lsrc2MuxResult, fire)
+      out.bits.lsrc2.bits := fusionList.head.lsrc2MuxResult
     }.otherwise {//elsewhen (src2WithZero) {
       out.bits.lsrc2.bits := 0.U
     }

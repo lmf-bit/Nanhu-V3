@@ -119,9 +119,8 @@ class CtrlFlow(implicit p: Parameters) extends XSBundle {
   val ftqOffset = UInt(log2Up(PredictWidth).W)
   // needs to be checked by FDI
   val fdiUntrusted = Bool()
-
-  //vector
-
+  // ibuffer and decode debug info
+  val predebugInfo = new PrePerfDebugInfo
 }
 
 // Decode DecodeWidth insts at Decode Stage
@@ -143,6 +142,7 @@ class CtrlSignals(implicit p: Parameters) extends XSBundle {
   val fpu = new FPUCtrlSignals
   val isMove = Bool()
   val singleStep = Bool()
+  val robCanCompress = Bool()
   // This inst will flush all the pipe when it is the oldest inst in ROB,
   // then replay from this inst itself
   val replayInst = Bool()
@@ -155,7 +155,7 @@ class CtrlSignals(implicit p: Parameters) extends XSBundle {
   val wvstartType = VstartType()
 
   private def allSignals = srcType ++ Seq(fuType, fuOpType, rfWen, fpWen,
-    vdWen, isXSTrap, noSpecExec, blockBackward, flushPipe, wvxsat, wvstartType, selImm)
+    vdWen, isXSTrap, noSpecExec, blockBackward, flushPipe, robCanCompress, wvxsat, wvstartType, selImm)
 
   def decode(inst: UInt, table: Iterable[(BitPat, List[BitPat])]): CtrlSignals = {
     this := DontCare
@@ -176,7 +176,7 @@ class CtrlSignals(implicit p: Parameters) extends XSBundle {
   }
 
   def isVset: Bool = (fuOpType===CSROpType.vsetivli || fuOpType===CSROpType.vsetvli || fuOpType===CSROpType.vsetvl)
-
+  def needWriteRf: Bool = (rfWen && ldest =/= 0.U) || fpWen
 }
 
 class CfCtrl(implicit p: Parameters) extends XSBundle {
@@ -199,6 +199,11 @@ class PerfDebugInfo(implicit p: Parameters) extends XSBundle {
   val runahead_checkpoint_id = UInt(64.W)
 }
 
+class PrePerfDebugInfo(implicit p: Parameters) extends XSBundle {
+  val fetchTime = UInt(XLEN.W)
+  val decodeTime = UInt(XLEN.W)
+}
+
 // Separate LSQ
 class LSIdx(implicit p: Parameters) extends XSBundle {
   val lqIdx = new LqPtr
@@ -217,7 +222,12 @@ class MicroOp(implicit p: Parameters) extends CfCtrl {
   val eliminatedMove = Bool()
   val lpv = Vec(loadUnitNum, UInt(LpvLength.W))
   val debugInfo = new PerfDebugInfo
-
+  val compressInstNum = UInt(log2Ceil(RenameWidth + 1).W) // instruction number per robEntry
+  val compressWbNum = UInt(log2Ceil(RenameWidth + 1).W)   // instruction writeback number per robEntry
+  val compressMask = UInt(RenameWidth.W)
+  val lastUop = Bool() // compress rob last uop sign
+  val firstUop = Bool() // compress rob first uop sign
+  val snapshot = Bool() // control snapshot generate
   //vector
   val vm = UInt(PhyRegIdxWidth.W)
   val vmState = SrcState()
@@ -334,22 +344,31 @@ class ExceptionInfo(implicit p: Parameters) extends XSBundle {
 }
 
 class RobEntryData(implicit p: Parameters) extends XSBundle {
-  val ldest = UInt(5.W)
-  val rfWen = Bool()
-  val fpWen = Bool()
-  val vecWen = Bool()
+  val ldest = UInt(5.W) // todo: mv to rab
+  val rfWen = Bool() // todo: mv to rab
+  val fpWen = Bool() // todo: mv to rab
+  val vecWen = Bool() // todo: mv to rab
   val wflags = Bool()
   val wvcsr = Bool()
   val commitType = CommitType()
-  val pdest = UInt(PhyRegIdxWidth.W)
-  val old_pdest = UInt(PhyRegIdxWidth.W)
+  val pdest = UInt(PhyRegIdxWidth.W)  // todo: mv to rab
+  val old_pdest = UInt(PhyRegIdxWidth.W)  // todo: mv to rab
   val ftqIdx = new FtqPtr
   val ftqOffset = UInt(log2Up(PredictWidth).W)
   val vtypeWb = Bool()
   val isVector = Bool()
   val isOrder = Bool()
+  val needDest = Bool()
+  val realDestNum = UInt(log2Ceil(RenameWidth + 1).W) // need rfWen num per robEntry after compressed
+  val instrSize = if (env.EnableDifftest || env.AlwaysBasicDiff) Some(UInt(log2Up(RenameWidth + 1).W)) else None
+  // val compressWbNum = UInt(log2Ceil(RenameWidth + 1).W) // instruction writeback number per robEntry
 }
+class DiffCommitIO(implicit p: Parameters) extends XSBundle {
+  val isCommit = Bool()
+  val commitValid = Vec(CommitWidth * RenameWidth, Bool())
 
+  val info = Vec(CommitWidth * RenameWidth, new RabCommitInfo)
+}
 class RobCommitInfo(implicit p: Parameters) extends RobEntryData {
   // these should be optimized for synthesis verilog
   val pc = UInt(VAddrBits.W)
@@ -369,6 +388,9 @@ class RobCommitInfo(implicit p: Parameters) extends RobEntryData {
     vtypeWb := data.vtypeWb
     isVector := data.isVector
     isOrder := data.isOrder
+    needDest := (data.rfWen && data.ldest =/= 0.U) || data.fpWen || data.vecWen
+    realDestNum := data.realDestNum
+    instrSize.foreach(_ := data.instrSize.getOrElse(0.U))
   }
 }
 
@@ -397,6 +419,48 @@ class RobCommitIO(implicit p: Parameters) extends XSBundle {
   }
 }
 
+class RabCommitInfo(implicit p: Parameters) extends XSBundle {
+  val ldest = UInt(5.W)
+  val pdest = UInt(PhyRegIdxWidth.W)
+  val rfWen = Bool()
+  val fpWen = Bool()
+  val vecWen = Bool()
+  val v0Wen = Bool()
+  val vlWen = Bool()
+  val isMove = Bool()
+}
+
+class RabCommitIO(implicit p: Parameters) extends XSBundle {
+  val isCommit = Bool()
+  val commitValid = Vec(RabCommitWidth, Bool())
+
+  val isWalk = Bool()
+  // valid bits optimized for walk
+  val walkValid = Vec(RabCommitWidth, Bool())
+
+  val info = Vec(RabCommitWidth, new RabCommitInfo)
+  val robIdx = Vec(RabCommitWidth, new RobPtr)
+
+  def hasWalkInstr: Bool = isWalk && walkValid.asUInt.orR
+  def hasCommitInstr: Bool = isCommit && commitValid.asUInt.orR
+  def Pipe:RabCommitIO = {
+    val robCmtPipe = Wire(new RabCommitIO)
+    robCmtPipe.isCommit := RegNext(this.isCommit, false.B)
+    robCmtPipe.commitValid := RegNext(this.commitValid)
+    robCmtPipe.isWalk := RegNext(this.isWalk, false.B)
+    robCmtPipe.walkValid := RegNext(this.walkValid)
+    robCmtPipe.info := RegEnable(this.info, this.isCommit | this.isWalk)
+    robCmtPipe.robIdx := RegEnable(this.robIdx, this.isCommit | this.isWalk)
+    robCmtPipe
+  }
+}
+class SnapshotPort(implicit p: Parameters) extends XSBundle {
+  val snptEnq = Bool()
+  val snptDeq = Bool()
+  val useSnpt = Bool()
+  val snptSelect = UInt(log2Ceil(RenameSnapshotNum).W)
+  val flushVec = Vec(RenameSnapshotNum, Bool())
+}
 class FrontendToCtrlIO(implicit p: Parameters) extends XSBundle {
   // to backend end
   val cfVec = Vec(DecodeWidth, DecoupledIO(new CtrlFlow))

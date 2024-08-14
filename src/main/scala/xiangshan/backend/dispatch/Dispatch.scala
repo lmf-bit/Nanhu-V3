@@ -19,11 +19,11 @@ package xiangshan.backend.dispatch
 import org.chipsalliance.cde.config.Parameters
 import chisel3._
 import chisel3.util._
-import difftest._
 import utils._
+import xs.utils.GTimer
 import xiangshan.ExceptionNO._
 import xiangshan._
-import xiangshan.backend.rob.RobEnqIO
+import xiangshan.backend.rob._
 import xiangshan.mem.mdp._
 import xs.utils.perf.HasPerfLogging
 import xiangshan.VstartType
@@ -33,10 +33,8 @@ class Dispatch(implicit p: Parameters) extends XSModule with HasPerfEvents with 
   val io = IO(new Bundle() {
     val hartId = Input(UInt(8.W))
     // from rename
-    val fromRename = Vec(RenameWidth, Vec(RenameWidth, Flipped(DecoupledIO(new MicroOp))))
+    val fromRename = Vec(RenameWidth, Flipped(DecoupledIO(new MicroOp)))
     val recv = Output(Vec(RenameWidth, Bool()))
-    // enq Rob
-    val enqRob = Flipped(new RobEnqIO)
     // enq Lsq
     val allocPregs = Vec(RenameWidth, Output(new ResetPregStateReq))
     // to dispatch queue
@@ -56,8 +54,6 @@ class Dispatch(implicit p: Parameters) extends XSModule with HasPerfEvents with 
       val req = Vec(RenameWidth, ValidIO(new MicroOp))
     }
     val redirect = Flipped(ValidIO(new Redirect))
-    // singleStep
-    val singleStep = Input(Bool())
     // lfst
     val lfst = new DispatchLFSTIO
     val vstart = Input(UInt(log2Ceil(VLEN + 1).W))
@@ -69,7 +65,8 @@ class Dispatch(implicit p: Parameters) extends XSModule with HasPerfEvents with 
   private val vstartHold = RegInit(false.B)
   private def CheckVstart(in:MicroOp):Bool = in.ctrl.wvstartType === VstartType.write && !vstartHold && io.vstart.orR
 
-  private val updateVstartHold = io.enqRob.req.map(r => r.valid && io.enqRob.canAccept && CheckVstart(r.bits)).reduce(_ || _)
+  val allResourceReady = io.toIntDq.canAccept(0) && io.toFpDq.canAccept(0) && io.toLsDq.canAccept(0)
+  private val updateVstartHold = io.fromRename.map(r => r.valid && allResourceReady && CheckVstart(r.bits)).reduce(_ || _)
   when(updateVstartHold) {
     vstartHold := true.B
   }.elsewhen(io.vstart === 0.U || io.redirect.valid) {
@@ -77,32 +74,22 @@ class Dispatch(implicit p: Parameters) extends XSModule with HasPerfEvents with 
   }
 
   // valid bits for different dispatch queues
-  val isInt = VecInit(io.fromRename(0).map(req => FuType.isIntExu(req.bits.ctrl.fuType)))
-  val isBranch = VecInit(io.fromRename(0).map(req =>
+  val isInt = VecInit(io.fromRename.map(req => FuType.isIntExu(req.bits.ctrl.fuType)))
+  val isBranch = VecInit(io.fromRename.map(req =>
     // cover auipc (a fake branch)
     !req.bits.cf.pd.notCFI || FuType.isJumpExu(req.bits.ctrl.fuType)
   ))
-  val isFp = VecInit(io.fromRename(1).map(req => FuType.isFpExu(req.bits.ctrl.fuType)))
-  val isMem = VecInit(io.fromRename(1).map(req => FuType.isMemExu(req.bits.ctrl.fuType)))
-  val isLs = VecInit(io.fromRename(2).map(req => FuType.isLoadStore(req.bits.ctrl.fuType)))
-  val isStore = VecInit(io.fromRename(2).map(req => FuType.isStore(req.bits.ctrl.fuType)))
-  val isAMO = VecInit(io.fromRename(3).map(req => FuType.isAMO(req.bits.ctrl.fuType)))
-  val isBlockBackward = VecInit(io.fromRename(3).map(req => req.bits.ctrl.blockBackward || CheckVstart(req.bits)))
-  val isNoSpecExec = VecInit(io.fromRename(3).map(req => req.bits.ctrl.noSpecExec || CheckVstart(req.bits)))
+  val isFp = VecInit(io.fromRename.map(req => FuType.isFpExu(req.bits.ctrl.fuType)))
+  val isMem = VecInit(io.fromRename.map(req => FuType.isMemExu(req.bits.ctrl.fuType)))
+  val isLs = VecInit(io.fromRename.map(req => FuType.isLoadStore(req.bits.ctrl.fuType)))
+  val isStore = VecInit(io.fromRename.map(req => FuType.isStore(req.bits.ctrl.fuType)))
+  val isAMO = VecInit(io.fromRename.map(req => FuType.isAMO(req.bits.ctrl.fuType)))
 
   /**
    * Part 2:
    * Update commitType, psrc(0), psrc(1), psrc(2), old_pdest, robIdx and singlestep for the uops
    */
 
-  val singleStepStatus = RegInit(false.B)
-  val inst0actualOut = io.enqRob.req(0).valid && !vstartHold
-  when(io.redirect.valid) {
-    singleStepStatus := false.B
-  }.elsewhen(io.singleStep && io.fromRename(0)(0).fire && inst0actualOut) {
-    singleStepStatus := true.B
-  }
-  XSDebug(singleStepStatus, "Debug Mode: Singlestep status is asserted\n")
 
   val updatedUop = Wire(Vec(RenameWidth, new MicroOp))
   val updatedCommitType = Wire(Vec(RenameWidth, CommitType()))
@@ -110,20 +97,22 @@ class Dispatch(implicit p: Parameters) extends XSModule with HasPerfEvents with 
   for (i <- 0 until RenameWidth) {
     updatedCommitType(i) := Cat(isLs(i), (isStore(i) && !isAMO(i)) | isBranch(i))
 
-    updatedUop(i) := io.fromRename(1)(i).bits
-    updatedUop(i).debugInfo.eliminatedMove := io.fromRename(1)(i).bits.eliminatedMove
+    updatedUop(i) := io.fromRename(i).bits
+    updatedUop(i).debugInfo.eliminatedMove := io.fromRename(i).bits.eliminatedMove
+    val timer = GTimer()
+    updatedUop(i).debugInfo.dispatchTime := timer
     // update commitType
-    when(!CommitType.isFused(io.fromRename(1)(i).bits.ctrl.commitType)) {
+    when(!CommitType.isFused(io.fromRename(i).bits.ctrl.commitType)) {
       updatedUop(i).ctrl.commitType := updatedCommitType(i)
     }.otherwise {
-      XSError(io.fromRename(1)(i).valid && updatedCommitType(i) =/= CommitType.NORMAL, "why fused?\n")
+      XSError(io.fromRename(i).valid && updatedCommitType(i) =/= CommitType.NORMAL, "why fused?\n")
     }
     // For the LUI instruction: psrc(0) is from register file and should always be zero.
-    when(io.fromRename(1)(i).bits.isLUI) {
+    when(io.fromRename(i).bits.isLUI) {
       updatedUop(i).psrc(0) := 0.U
     }
 
-    io.lfst.req(i).valid := io.fromRename(1)(i).fire && updatedUop(i).cf.storeSetHit && !vstartHold
+    io.lfst.req(i).valid := io.fromRename(i).fire && updatedUop(i).cf.storeSetHit && !vstartHold
     io.lfst.req(i).bits.isstore := isStore(i)
     io.lfst.req(i).bits.ssid := updatedUop(i).cf.ssid
     io.lfst.req(i).bits.robIdx := updatedUop(i).robIdx // speculatively assigned in rename
@@ -133,12 +122,11 @@ class Dispatch(implicit p: Parameters) extends XSModule with HasPerfEvents with 
       updatedUop(i).cf.loadWaitBit := io.lfst.resp(i).bits.shouldWait
       updatedUop(i).cf.waitForRobIdx := io.lfst.resp(i).bits.robIdx
     } else {
-      updatedUop(i).cf.loadWaitBit := isLs(i) && !isStore(i) && io.fromRename(1)(i).bits.cf.loadWaitBit
+      updatedUop(i).cf.loadWaitBit := isLs(i) && !isStore(i) && io.fromRename(i).bits.cf.loadWaitBit
     }
 
     // update singleStep
-    updatedUop(i).ctrl.singleStep := io.singleStep && (if (i == 0) singleStepStatus else true.B)
-    when(io.fromRename(0)(i).fire) {
+    when(io.fromRename(i).fire) {
       XSDebug(updatedUop(i).cf.trigger.getFrontendCanFire, s"Debug Mode: inst ${i} has frontend trigger exception\n")
       XSDebug(updatedUop(i).ctrl.singleStep, s"Debug Mode: inst ${i} has single step exception\n")
     }
@@ -146,16 +134,16 @@ class Dispatch(implicit p: Parameters) extends XSModule with HasPerfEvents with 
 
   // store set perf count
   XSPerfAccumulate("waittable_load_wait", PopCount((0 until RenameWidth).map(i =>
-    io.fromRename(0)(i).fire && io.fromRename(0)(i).bits.cf.loadWaitBit && !isStore(i) && isLs(i)
+    io.fromRename(i).fire && io.fromRename(i).bits.cf.loadWaitBit && !isStore(i) && isLs(i)
   )))
   XSPerfAccumulate("storeset_load_wait", PopCount((0 until RenameWidth).map(i =>
-    io.fromRename(0)(i).fire && updatedUop(i).cf.loadWaitBit && !isStore(i) && isLs(i)
+    io.fromRename(i).fire && updatedUop(i).cf.loadWaitBit && !isStore(i) && isLs(i)
   )))
   XSPerfAccumulate("storeset_load_strict_wait", PopCount((0 until RenameWidth).map(i =>
-    io.fromRename(0)(i).fire && updatedUop(i).cf.loadWaitBit && updatedUop(i).cf.loadWaitStrict && !isStore(i) && isLs(i)
+    io.fromRename(i).fire && updatedUop(i).cf.loadWaitBit && updatedUop(i).cf.loadWaitStrict && !isStore(i) && isLs(i)
   )))
   XSPerfAccumulate("storeset_store_wait", PopCount((0 until RenameWidth).map(i =>
-    io.fromRename(0)(i).fire && updatedUop(i).cf.loadWaitBit && isStore(i)
+    io.fromRename(i).fire && updatedUop(i).cf.loadWaitBit && isStore(i)
   )))
 
   /**
@@ -163,65 +151,40 @@ class Dispatch(implicit p: Parameters) extends XSModule with HasPerfEvents with 
    * acquire ROB (all), LSQ (load/store only) and dispatch queue slots
    * only set valid when all of them provides enough entries
    */
-  val allResourceReady = io.enqRob.canAccept_dup(0) && io.toIntDq.canAccept(0) && io.toFpDq.canAccept(0) && io.toLsDq.canAccept(0)
+//  val allResourceReady = io.toIntDq.canAccept(0) && io.toFpDq.canAccept(0) && io.toLsDq.canAccept(0)
 
   // Instructions should enter dispatch queues in order.
   // thisIsBlocked: this instruction is blocked by itself (based on noSpecExec)
   // nextCanOut: next instructions can out (based on blockBackward)
   // notBlockedByPrevious: previous instructions can enqueue
-  val hasException = VecInit(io.fromRename(0).zip(updatedUop).map {
+  val hasException = VecInit(io.fromRename.zip(updatedUop).map {
     case (fromRename: DecoupledIO[MicroOp], uop: MicroOp) =>
       selectFrontend(fromRename.bits.cf.exceptionVec).asUInt.orR || uop.ctrl.singleStep || fromRename.bits.cf.trigger.getFrontendCanFire
   })
-  val thisIsBlocked = VecInit((0 until RenameWidth).map(i => {
-    // for i > 0, when Rob is empty but dispatch1 have valid instructions to enqueue, it's blocked
-    if (i > 0) isNoSpecExec(i) && (!io.enqRob.isEmpty || Cat(io.fromRename(0).take(i).map(_.valid)).orR)
-    else isNoSpecExec(i) && !io.enqRob.isEmpty
-  }))
-  val nextCanOut = VecInit((0 until RenameWidth).map(i =>
-    (!isNoSpecExec(i) && !isBlockBackward(i)) || !io.fromRename(0)(i).valid
-  ))
-  val notBlockedByPrevious = VecInit((0 until RenameWidth).map(i =>
-    if (i == 0) true.B
-    else Cat((0 until i).map(j => nextCanOut(j))).andR
-  ))
-
-  // for noSpecExec: (robEmpty || !this.noSpecExec) && !previous.noSpecExec
-  // For blockBackward:
-  // this instruction can actually dequeue: 3 conditions
-  // (1) resources are ready
-  // (2) previous instructions are ready
-  val thisCanActualOut = (0 until RenameWidth).map(i => !thisIsBlocked(i) && notBlockedByPrevious(i) && !vstartHold)
-  val hasValidException = io.fromRename(1).zip(hasException).map(x => x._1.valid && x._2)
+  val hasValidException = io.fromRename.zip(hasException).map(x => x._1.valid && x._2)
 
   // input for ROB, LSQ, Dispatch Queue
   for (i <- 0 until RenameWidth) {
-    io.enqRob.needAlloc(i) := io.fromRename(3)(i).valid
-    io.enqRob.req(i).valid := io.fromRename(3)(i).valid && thisCanActualOut(i) && io.toIntDq.canAccept(1) && io.toFpDq.canAccept(1) && io.toLsDq.canAccept(1) && !vstartHold
-    io.enqRob.req(i).bits := updatedUop(i)
-    io.enqRob.req(i).bits.ctrl.noSpecExec := updatedUop(i).ctrl.noSpecExec || CheckVstart(updatedUop(i))
-    io.enqRob.req(i).bits.ctrl.blockBackward := updatedUop(i).ctrl.blockBackward || CheckVstart(updatedUop(i))
-    XSDebug(io.enqRob.req(i).valid, p"pc 0x${Hexadecimal(io.fromRename(2)(i).bits.cf.pc)} receives nrob ${io.enqRob.resp(i)}\n")
 
     // When previous instructions have exceptions, following instructions should not enter dispatch queues.
     val previousHasException = if (i == 0) false.B else VecInit(hasValidException.take(i)).asUInt.orR
-    val canEnterDpq = !hasException(i) && thisCanActualOut(i) && !previousHasException && io.enqRob.canAccept_dup(1)
+    val canEnterDpq = !hasException(i) && !vstartHold && !previousHasException
 
     // send uops to dispatch queues
     // Note that if one of their previous instructions cannot enqueue, they should not enter dispatch queue.
-    val doesNotNeedExec = io.fromRename(3)(i).bits.eliminatedMove
-    io.toIntDq.needAlloc(i) := io.fromRename(0)(i).valid && isInt(i) && !doesNotNeedExec
-    io.toIntDq.req(i).valid := io.fromRename(0)(i).valid && isInt(i) && !doesNotNeedExec &&
+    val doesNotNeedExec = io.fromRename(i).bits.eliminatedMove
+    io.toIntDq.needAlloc(i) := io.fromRename(i).valid && isInt(i) && !doesNotNeedExec
+    io.toIntDq.req(i).valid := io.fromRename(i).valid && isInt(i) && !doesNotNeedExec &&
       canEnterDpq && io.toFpDq.canAccept(2) && io.toLsDq.canAccept(2) && !vstartHold
     io.toIntDq.req(i).bits := updatedUop(i)
 
-    io.toFpDq.needAlloc(i) := io.fromRename(1)(i).valid && isFp(i)
-    io.toFpDq.req(i).valid := io.fromRename(1)(i).valid && isFp(i) &&
+    io.toFpDq.needAlloc(i) := io.fromRename(i).valid && isFp(i)
+    io.toFpDq.req(i).valid := io.fromRename(i).valid && isFp(i) &&
       canEnterDpq && io.toLsDq.canAccept(2) && io.toIntDq.canAccept(2) && !vstartHold
     io.toFpDq.req(i).bits := updatedUop(i)
 
-    io.toLsDq.needAlloc(i) := io.fromRename(2)(i).valid && isMem(i)
-    io.toLsDq.req(i).valid := io.fromRename(2)(i).valid && isMem(i) &&
+    io.toLsDq.needAlloc(i) := io.fromRename(i).valid && isMem(i)
+    io.toLsDq.req(i).valid := io.fromRename(i).valid && isMem(i) &&
       canEnterDpq && io.toFpDq.canAccept(2) && io.toIntDq.canAccept(2) && !vstartHold
     io.toLsDq.req(i).bits := updatedUop(i)
 
@@ -233,49 +196,47 @@ class Dispatch(implicit p: Parameters) extends XSModule with HasPerfEvents with 
   /**
    * Part 4: send response to rename when dispatch queue accepts the uop
    */
-  val hasValidInstr = VecInit(io.fromRename(3).map(_.valid)).asUInt.orR
-  val hasSpecialInstr = Cat((0 until RenameWidth).map(i => io.fromRename(3)(i).valid && (isBlockBackward(i) || isNoSpecExec(i)))).orR
+  val hasValidInstr = VecInit(io.fromRename.map(_.valid)).asUInt.orR
   for (i <- 0 until RenameWidth) {
-    io.recv(i) := thisCanActualOut(i) && io.enqRob.canAccept_dup(2) && io.toIntDq.canAccept(3) && io.toFpDq.canAccept(3) && io.toLsDq.canAccept(3) && !vstartHold
-    io.fromRename(0)(i).ready := !hasValidInstr || !hasSpecialInstr && io.enqRob.canAccept_dup(2) && io.toIntDq.canAccept(3) && io.toFpDq.canAccept(3) && io.toLsDq.canAccept(3) && !vstartHold
-    io.fromRename(1)(i).ready := !hasValidInstr || !hasSpecialInstr && io.enqRob.canAccept_dup(2) && io.toIntDq.canAccept(3) && io.toFpDq.canAccept(3) && io.toLsDq.canAccept(3) && !vstartHold
-    io.fromRename(2)(i).ready := !hasValidInstr || !hasSpecialInstr && io.enqRob.canAccept_dup(2) && io.toIntDq.canAccept(3) && io.toFpDq.canAccept(3) && io.toLsDq.canAccept(3) && !vstartHold
-    io.fromRename(3)(i).ready := !hasValidInstr || !hasSpecialInstr && io.enqRob.canAccept_dup(2) && io.toIntDq.canAccept(3) && io.toFpDq.canAccept(3) && io.toLsDq.canAccept(3) && !vstartHold
+    io.recv(i) := !hasValidInstr || io.toIntDq.canAccept(3) && io.toFpDq.canAccept(3) && io.toLsDq.canAccept(3) && !vstartHold
+    io.fromRename(i).ready := !hasValidInstr || io.toIntDq.canAccept(3) && io.toFpDq.canAccept(3) && io.toLsDq.canAccept(3) && !vstartHold
+    io.fromRename(i).ready := !hasValidInstr || io.toIntDq.canAccept(3) && io.toFpDq.canAccept(3) && io.toLsDq.canAccept(3) && !vstartHold
+    io.fromRename(i).ready := !hasValidInstr || io.toIntDq.canAccept(3) && io.toFpDq.canAccept(3) && io.toLsDq.canAccept(3) && !vstartHold
+    io.fromRename(i).ready := !hasValidInstr || io.toIntDq.canAccept(3) && io.toFpDq.canAccept(3) && io.toLsDq.canAccept(3) && !vstartHold
 
-    XSInfo(io.recv(i) && io.fromRename(3)(i).valid,
-      p"pc 0x${Hexadecimal(io.fromRename(3)(i).bits.cf.pc)}, type(${isInt(i)}, ${isFp(i)}, ${isLs(i)}), " +
+    XSInfo(io.recv(i) && io.fromRename(i).valid,
+      p"pc 0x${Hexadecimal(io.fromRename(i).bits.cf.pc)}, type(${isInt(i)}, ${isFp(i)}, ${isLs(i)}), " +
         p"rob ${updatedUop(i).robIdx})\n"
     )
 
-    io.allocPregs(i).isInt := io.fromRename(3)(i).valid && io.fromRename(3)(i).bits.ctrl.rfWen && (io.fromRename(3)(i).bits.ctrl.ldest =/= 0.U) && !io.fromRename(3)(i).bits.eliminatedMove
-    io.allocPregs(i).isFp := io.fromRename(3)(i).valid && io.fromRename(3)(i).bits.ctrl.fpWen
-    io.allocPregs(i).preg := io.fromRename(3)(i).bits.pdest
+    io.allocPregs(i).isInt := io.fromRename(i).valid && io.fromRename(i).bits.ctrl.rfWen && (io.fromRename(i).bits.ctrl.ldest =/= 0.U) && !io.fromRename(i).bits.eliminatedMove
+    io.allocPregs(i).isFp := io.fromRename(i).valid && io.fromRename(i).bits.ctrl.fpWen
+    io.allocPregs(i).preg := io.fromRename(i).bits.pdest
   }
-  val renameFireCnt = PopCount(io.recv.zip(io.fromRename(0)).map({ case (a, b) => a && b.valid }))
+
+  //perf monitor
+  val renameFireCnt = PopCount(io.recv.zip(io.fromRename).map({ case (a, b) => a && b.valid }))
   val enqFireCnt = PopCount(io.toIntDq.req.map(_.valid && io.toIntDq.canAccept(0))) +
     PopCount(io.toFpDq.req.map(_.valid && io.toFpDq.canAccept(0))) +
     PopCount(io.toLsDq.req.map(_.valid && io.toLsDq.canAccept(0)))
   XSError(enqFireCnt > renameFireCnt, "enqFireCnt should not be greater than renameFireCnt\n")
-
-  XSPerfAccumulate("in", Mux(RegNext(io.fromRename(0)(0).ready), PopCount(io.fromRename(0).map(_.valid)), 0.U))
+  XSPerfAccumulate("in", Mux(RegNext(io.fromRename(0).ready), PopCount(io.fromRename.map(_.valid)), 0.U))
   XSPerfAccumulate("empty", !hasValidInstr)
-  XSPerfAccumulate("utilization", PopCount(io.fromRename(0).map(_.valid)))
-  XSPerfAccumulate("waitInstr", PopCount((0 until RenameWidth).map(i => io.fromRename(0)(i).valid && !io.recv(i))))
-  XSPerfAccumulate("stall_cycle_rob", hasValidInstr && !io.enqRob.canAccept && io.toIntDq.canAccept(0) && io.toFpDq.canAccept(0) && io.toLsDq.canAccept(0))
-  XSPerfAccumulate("stall_cycle_int_dq", hasValidInstr && io.enqRob.canAccept && !io.toIntDq.canAccept(0) && io.toFpDq.canAccept(0) && io.toLsDq.canAccept(0))
-  XSPerfAccumulate("stall_cycle_fp_dq", hasValidInstr && io.enqRob.canAccept && io.toIntDq.canAccept(0) && !io.toFpDq.canAccept(0) && io.toLsDq.canAccept(0))
-  XSPerfAccumulate("stall_cycle_ls_dq", hasValidInstr && io.enqRob.canAccept && io.toIntDq.canAccept(0) && io.toFpDq.canAccept(0) && !io.toLsDq.canAccept(0))
+  XSPerfAccumulate("utilization", PopCount(io.fromRename.map(_.valid)))
+  XSPerfAccumulate("waitInstr", PopCount((0 until RenameWidth).map(i => io.fromRename(i).valid && !io.recv(i))))
+  XSPerfAccumulate("stall_cycle_int_dq", hasValidInstr && !io.toIntDq.canAccept(0) && io.toFpDq.canAccept(0) && io.toLsDq.canAccept(0))
+  XSPerfAccumulate("stall_cycle_fp_dq", hasValidInstr && io.toIntDq.canAccept(0) && !io.toFpDq.canAccept(0) && io.toLsDq.canAccept(0))
+  XSPerfAccumulate("stall_cycle_ls_dq", hasValidInstr && io.toIntDq.canAccept(0) && io.toFpDq.canAccept(0) && !io.toLsDq.canAccept(0))
 
   val perfEvents = Seq(
-    ("dispatch_in", PopCount(io.fromRename(0).map(_.valid & io.fromRename(0)(0).ready))),
+    ("dispatch_in", PopCount(io.fromRename.map(_.valid & io.fromRename(0).ready))),
     ("dispatch_empty", !hasValidInstr),
-    ("dispatch_utili", PopCount(io.fromRename(0).map(_.valid))),
-    ("dispatch_waitinstr", PopCount((0 until RenameWidth).map(i => io.fromRename(0)(i).valid && !io.recv(i)))),
+    ("dispatch_utili", PopCount(io.fromRename.map(_.valid))),
+    ("dispatch_waitinstr", PopCount((0 until RenameWidth).map(i => io.fromRename(i).valid && !io.recv(i)))),
     ("dispatch_stall_cycle_lsq", false.B),
-    ("dispatch_stall_cycle_rob", hasValidInstr && !io.enqRob.canAccept && io.toIntDq.canAccept(0) && io.toFpDq.canAccept(0) && io.toLsDq.canAccept(0)),
-    ("dispatch_stall_cycle_int_dq", hasValidInstr && io.enqRob.canAccept && !io.toIntDq.canAccept(0) && io.toFpDq.canAccept(0) && io.toLsDq.canAccept(0)),
-    ("dispatch_stall_cycle_fp_dq", hasValidInstr && io.enqRob.canAccept && io.toIntDq.canAccept(0) && !io.toFpDq.canAccept(0) && io.toLsDq.canAccept(0)),
-    ("dispatch_stall_cycle_ls_dq", hasValidInstr && io.enqRob.canAccept && io.toIntDq.canAccept(0) && io.toFpDq.canAccept(0) && !io.toLsDq.canAccept(0))
+    ("dispatch_stall_cycle_int_dq", hasValidInstr && !io.toIntDq.canAccept(0) && io.toFpDq.canAccept(0) && io.toLsDq.canAccept(0)),
+    ("dispatch_stall_cycle_fp_dq", hasValidInstr && io.toIntDq.canAccept(0) && !io.toFpDq.canAccept(0) && io.toLsDq.canAccept(0)),
+    ("dispatch_stall_cycle_ls_dq", hasValidInstr && io.toIntDq.canAccept(0) && io.toFpDq.canAccept(0) && !io.toLsDq.canAccept(0))
   )
   generatePerfEvent()
 }

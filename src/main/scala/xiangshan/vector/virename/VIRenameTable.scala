@@ -142,7 +142,7 @@ class VIRenameTable(implicit p: Parameters) extends VectorBaseModule {
   //Walk write has priority: write with bigger idx will overwrite ones with smaller.
   for (i <- 0 until 8) {
     when(io.commit.doWalk && io.commit.mask(i)) {
-      sRAT(io.commit.lrIdx(i)) := io.commit.prIdxOld(i)
+      sRAT(io.commit.lrIdx(i)) := io.commit.prIdxNew(i)
     }
   }
   //Commit write has priority: write with bigger idx will overwrite ones with smaller.

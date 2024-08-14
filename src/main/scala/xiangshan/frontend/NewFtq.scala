@@ -470,7 +470,7 @@ class Ftq(parentName:String = "Unknown")(implicit p: Parameters) extends XSModul
   allowToIfu := !ifuFlush && !backendRedirect.valid && !backendRedirectReg.valid
 
   def copyNum = 5
-  val bpuPtr, ifuPtr, ifuWbPtr, commPtr = RegInit(FtqPtr(false.B, 0.U))
+  val bpuPtr, ifuPtr, ifuWbPtr, commPtr, robCommPtr = RegInit(FtqPtr(false.B, 0.U))
   val ifuPtrPlus1 = RegInit(FtqPtr(false.B, 1.U))
   val ifuPtrPlus2 = RegInit(FtqPtr(false.B, 2.U))
   val commPtrPlus1 = RegInit(FtqPtr(false.B, 1.U))
@@ -483,6 +483,7 @@ class Ftq(parentName:String = "Unknown")(implicit p: Parameters) extends XSModul
   val ifuWbPtr_write     = WireInit(ifuWbPtr)
   val commPtr_write      = WireInit(commPtr)
   val commPtrPlus1_write = WireInit(commPtrPlus1)
+  val robCommPtr_write   = WireInit(robCommPtr)
   ifuPtr       := ifuPtr_write
   ifuPtrPlus1  := ifuPtrPlus1_write
   ifuPtrPlus2  := ifuPtrPlus2_write
@@ -493,14 +494,14 @@ class Ftq(parentName:String = "Unknown")(implicit p: Parameters) extends XSModul
     ptr := ifuPtr_write
     dontTouch(ptr)
   }
+  robCommPtr   := robCommPtr_write
   val validEntries = distanceBetween(bpuPtr, commPtr)
 
   // **********************************************************************
   // **************************** enq from bpu ****************************
   // **********************************************************************
 
-  // val new_entry_ready = validEntries < FtqSize.U 
-  val canCommit = Wire(Bool())//#2034
+  val canCommit = Wire(Bool())
   val new_entry_ready = validEntries < FtqSize.U || canCommit
   io.fromBpu.resp.ready := new_entry_ready
 
@@ -1038,11 +1039,17 @@ class Ftq(parentName:String = "Unknown")(implicit p: Parameters) extends XSModul
   //   Cat(commitStateQueue(commPtr.value).map(s => {
   //     s === c_invalid || s === c_commited
   //   })).andR
-  //#2034
-  canCommit := commPtr =/= ifuWbPtr && !may_have_stall_from_bpu &&
-    Cat(commitStateQueue(commPtr.value).map(s => {
-      s === c_invalid || s === c_commited
-    })).andR
+  val noToCommit = commitStateQueue(commPtr.value).map(s => s =/= c_valid).reduce(_ && _)
+  val allEmpty = commitStateQueue(commPtr.value).map(s => s === c_invalid).reduce(_ && _)
+  canCommit := commPtr =/= ifuWbPtr && !may_have_stall_from_bpu && (isAfter(robCommPtr, commPtr) || noToCommit && !allEmpty)
+
+  when (io.fromBackend.rob_commits.map(_.valid).reduce(_ | _)) {
+    robCommPtr_write := ParallelPriorityMux(io.fromBackend.rob_commits.map(_.valid).reverse, io.fromBackend.rob_commits.map(_.bits.ftqIdx).reverse)
+  } .elsewhen (commPtr =/= ifuWbPtr && !may_have_stall_from_bpu && noToCommit && !allEmpty) {
+    robCommPtr_write := commPtr
+  } .otherwise {
+    robCommPtr_write := robCommPtr
+  }
 
   val mmioReadPtr = io.mmioCommitRead.mmioFtqPtr
   val mmioLastCommit = isBefore(commPtr, mmioReadPtr) && (isAfter(ifuPtr,mmioReadPtr)  ||  mmioReadPtr ===   ifuPtr) &&

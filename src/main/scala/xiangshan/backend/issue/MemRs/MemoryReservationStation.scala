@@ -180,13 +180,13 @@ class MemoryReservationStationImpl(outer:MemoryReservationStation, param:RsParam
   private val fpWkpIns = wakeup.filter(_._2.writeFpRf).map(_._1).map(MemRsHelper.WbToWkp(_, p))
   private val vecWkpIns = wakeup.filter(e => e._2.writeVecRf && e._2.throughVectorRf).map(_._1).map(MemRsHelper.WbToWkp(_, p))
 
-  private val floatingBusyTable = Module(new BusyTable(NRPhyRegs, param.bankNum, (fpWkpIns ++ io.mulSpecWakeup ++ io.fmaSpecWakeup).length, RenameWidth))
+  private val floatingBusyTable = Module(new BusyTable(NRPhyRegs, param.bankNum, (fpWkpIns ++ io.mulSpecWakeup ++ io.fmaSpecWakeup).length, RenameWidth, true))
   floatingBusyTable.io.allocPregs := io.floatingAllocPregs
   floatingBusyTable.io.wbPregs.zip(fpWkpIns ++ io.mulSpecWakeup ++ fmaSpecWakeup).foreach({ case (bt, wb) =>
     bt.valid := wb.valid && wb.bits.destType === SrcType.fp
     bt.bits := wb.bits.pdest
   })
-  private val integerBusyTable = Module(new BusyTable(NRPhyRegs, param.bankNum * 2, regWkpIns.length + io.mulSpecWakeup.length + aluJmpSpecWakeup.length, RenameWidth))
+  private val integerBusyTable = Module(new BusyTable(NRPhyRegs, param.bankNum * 2, regWkpIns.length + io.mulSpecWakeup.length + aluJmpSpecWakeup.length, RenameWidth, true))
   integerBusyTable.io.allocPregs := io.integerAllocPregs
   integerBusyTable.io.wbPregs.zip(regWkpIns ++ aluJmpSpecWakeup ++ io.mulSpecWakeup).foreach({ case (bt, wb) =>
     bt.valid := wb.valid && wb.bits.destType === SrcType.reg

@@ -29,7 +29,7 @@ import freechips.rocketchip.rocket.Instructions._
  * IO bundle for the Decode unit
  */
 class VDecodeIO(implicit p: Parameters) extends VectorBaseBundle {
-  val in = Vec(VIDecodeWidth, Flipped(DecoupledIO(new CfCtrl)))
+  val in = Vec(VIDecodeWidth, Flipped(DecoupledIO(new MicroOp)))
   // to Rename
   val out = Vec(VIDecodeWidth, ValidIO(new MicroOp))
   val canOut = Input(Bool())

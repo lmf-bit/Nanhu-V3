@@ -27,6 +27,7 @@ class RobCommitHelper(implicit p: Parameters) extends XSModule with HasCircularQ
     val deq_valid = Vec(CommitWidth, Input(Bool()))
     val deq_writed = Vec(CommitWidth, Input(Bool()))
     val deq_isVec = Vec(CommitWidth, Input(Bool()))
+    val deq_needDest = Vec(CommitWidth, Input(Bool()))
     val exception_state = Flipped(ValidIO(new RobExceptionInfo))
     // for flush: when exception occurs, reset deqPtrs to range(0, CommitWidth)
     val intrBitSetReg = Input(Bool())
@@ -37,6 +38,7 @@ class RobCommitHelper(implicit p: Parameters) extends XSModule with HasCircularQ
     val deqPtrVec = Vec(CommitWidth, Output(new RobPtr))
     val deqPtrNextVec = Vec(CommitWidth, Output(new RobPtr))
     val commitValid = Vec(CommitWidth, Output(Bool()))
+    val rabCommitSize = Output(UInt(log2Up(RblSize).W))
   })
 
   val vecMask = Wire(Vec(CommitWidth, Bool()))
@@ -67,6 +69,8 @@ class RobCommitHelper(implicit p: Parameters) extends XSModule with HasCircularQ
   // only one instruction is allowed to commit
   val allowOnlyOne = commit_exception || io.intrBitSetReg
   val commitCnt = Mux(allowOnlyOne, canCommit(0), normalCommitCnt)
+  val actualCommit = VecInit((0 until CommitWidth).map(i => io.deq_valid(i) && io.deq_writed(i) && vecMask(i) && io.deq_needDest(i)))
+  val actualCommitSize = PopCount(actualCommit)
 
   val commitDeqPtrVec = VecInit(deqPtrVec.map(_ + commitCnt))
   val deqPtrVec_next = Mux((io.state === 0.U) && (!redirectOutValid) && (!io.blockCommit), commitDeqPtrVec, deqPtrVec)
@@ -75,6 +79,7 @@ class RobCommitHelper(implicit p: Parameters) extends XSModule with HasCircularQ
 
   io.deqPtrNextVec := deqPtrVec_next
   io.deqPtrVec      := deqPtrVec
+  io.rabCommitSize := actualCommitSize
 
   private val debugTimeoutCnt = RegInit(0.U(16.W))
   assert(debugTimeoutCnt < 200000.U, "No inst commits in 200000 cycles!")

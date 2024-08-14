@@ -29,7 +29,7 @@ class BusyTableReadIO(implicit p: Parameters) extends XSBundle {
   val resp = Output(Bool())
 }
 
-class BusyTable(size:Int, numReadPorts: Int, numWritePorts: Int, renameWidth:Int)(implicit p: Parameters) extends XSModule
+class BusyTable(size:Int, numReadPorts: Int, numWritePorts: Int, renameWidth:Int, needAllocBypass:Boolean = false)(implicit p: Parameters) extends XSModule
   with HasPerfEvents with HasPerfLogging{
   val io = IO(new Bundle() {
     // set preg state to busy
@@ -58,7 +58,11 @@ class BusyTable(size:Int, numReadPorts: Int, numWritePorts: Int, renameWidth:Int
     !Mux1H(addrSel, table.asBools)
   }
   io.read.foreach(r => {
-    r.resp := read(r.req, tableAfterWb)
+    if (needAllocBypass) {
+      r.resp := read(r.req, tableAfterWb | tableAfterAlloc)
+    } else {
+      r.resp := read(r.req, tableAfterWb)
+    }
   })
   table := tableAfterAlloc
 

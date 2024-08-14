@@ -25,18 +25,20 @@ import xs.utils.CircularShift
 import xs.utils.perf.HasPerfLogging
 
 
-class StdFreeList(size: Int)(implicit p: Parameters) extends BaseFreeList(size) with HasPerfEvents with HasPerfLogging{
+class StdFreeList(size: Int)(implicit p: Parameters) extends BaseFreeList(size) with HasPerfEvents with HasPerfLogging {
 
   val freeList = RegInit(VecInit(Seq.tabulate(size)( i => (i + 32).U(PhyRegIdxWidth.W) )))
-  val headPtr  = RegInit(FreeListPtr(false, 0))
-  val headPtrOH = RegInit(1.U(size.W))
-  val headPtrOHShift = CircularShift(headPtrOH)
-  // may shift [0, RenameWidth] steps
-  val headPtrOHVec = VecInit.tabulate(RenameWidth + 1)(headPtrOHShift.left)
-  XSError(headPtr.toOH =/= headPtrOH, p"wrong one-hot reg between $headPtr and $headPtrOH")
+
   val lastTailPtr = RegInit(FreeListPtr(true, 0)) // tailPtr in the last cycle (need to add freeReqReg)
   val tailPtr = Wire(new FreeListPtr) // this is the real tailPtr
   val tailPtrOHReg = RegInit(0.U(size.W))
+
+  // consider during the walk has another redirect
+  val alreadyInWalk = RegNext(io.walk)
+  val walkHasRedirect = alreadyInWalk && lastCycleRedirect
+  // consider the successive redirect come 
+  val headPtrCanMove = io.redirect && io.walk
+  dontTouch(headPtrCanMove)
 
   //
   // free committed instructions' `old_pdest` reg
@@ -71,24 +73,30 @@ class StdFreeList(size: Int)(implicit p: Parameters) extends BaseFreeList(size) 
     io.allocatePhyReg(i) := phyRegCandidates(/* if (i == 0) 0.U else */PopCount(io.allocateReq.take(i)))
     XSDebug(p"req:${io.allocateReq(i)} canAllocate:${io.canAllocate} pdest:${io.allocatePhyReg(i)}\n")
   }
-  val numAllocate = PopCount(io.allocateReq)
-  val headPtrAllocate = headPtr + numAllocate
-  val headPtrNext = Mux(io.canAllocate && io.doAllocate, headPtrAllocate, headPtr)
-  freeRegCnt := distanceBetween(tailPtr, headPtrNext)
+  val archAlloc = io.rabCommit.commitValid zip io.rabCommit.info map {
+    case (valid, info) => valid && info.fpWen
+  }
+  val numArchAllocate = PopCount(archAlloc)
+  val archHeadPtrNew  = archHeadPtr + numArchAllocate
+  val archHeadPtrNext = Mux(io.rabCommit.isCommit, archHeadPtrNew, archHeadPtr)
+  archHeadPtr := archHeadPtrNext
+
+  val isWalkAlloc = io.walk && io.doAllocate
+  val isNormalAlloc = io.canAllocate && io.doAllocate
+  val isAllocate = isWalkAlloc || isNormalAlloc
+  val numAllocate = Mux(io.walk, PopCount(io.walkReq), PopCount(io.allocateReq))
+  val headPtrAllocate = Mux(lastCycleRedirect, redirectedHeadPtr, headPtr + numAllocate)
+  val headPtrOHAllocate = Mux(lastCycleRedirect, redirectedHeadPtrOH, headPtrOHVec(numAllocate))
+  val headPtrNext = Mux(isAllocate, headPtrAllocate, headPtr)
+  freeRegCnt := Mux(isWalkAlloc && !lastCycleRedirect, distanceBetween(tailPtr, headPtr) - PopCount(io.walkReq),
+                Mux(isNormalAlloc,                     distanceBetween(tailPtr, headPtr) - PopCount(io.allocateReq),
+                                                       distanceBetween(tailPtr, headPtr)))
 
   // priority: (1) exception and flushPipe; (2) walking; (3) mis-prediction; (4) normal dequeue
-  val realDoAllocate = !io.redirect && io.canAllocate && io.doAllocate
-  headPtr := Mux(io.walk,
-    headPtr - io.stepBack,
-    Mux(realDoAllocate, headPtrAllocate, headPtr))
+  val realDoAllocate = !io.redirect && isAllocate
+  headPtr := Mux(realDoAllocate, headPtrAllocate, headPtr)
+  headPtrOH := Mux(realDoAllocate, headPtrOHAllocate, headPtrOH)
 
-  // Since the update of headPtr should have a good timing,
-  // we calculate the OH index here to optimize the freelist read timing.
-  // may shift [0, RenameWidth] steps
-  val stepBackHeadPtrOHVec = VecInit.tabulate(CommitWidth + 1)(headPtrOHShift.right)
-  val stepBackHeadPtrOH = stepBackHeadPtrOHVec(io.stepBack)
-  headPtrOH := Mux(io.walk, stepBackHeadPtrOH,
-    Mux(realDoAllocate, headPtrOHVec(numAllocate), headPtrOH))
 
   XSDebug(p"head:$headPtr tail:$tailPtr\n")
 

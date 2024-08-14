@@ -84,7 +84,6 @@ class RedirectGen(jmpRedirectNum:Int, aluRedirectNum:Int, memRedirectNum:Int)(im
   private val s1_redirectValid = s1_redirectSel.valid && !s1_redirectSel.bits.robIdx.needFlush(io.redirectIn)
   private val s1_exuOutSel = Mux1H(s1_redirectIdxOH, s1_allWb)
   private val s1_target = Mux1H(s1_redirectIdxOH(jmpRedirectNum - 1, 0), s1_allWb.take(jmpRedirectNum).map(_.bits.redirect.cfiUpdate.target))
-
   private val s2_redirectValidReg = RegNext(s1_redirectValid, false.B)
   private val s2_redirectBitsReg = RegEnable(s1_redirectSel.bits, s1_redirectValid)
   private val s2_redirectIdxOHReg = RegEnable(s1_redirectIdxOH, s1_redirectValid)
@@ -175,4 +174,7 @@ class RedirectGen(jmpRedirectNum:Int, aluRedirectNum:Int, memRedirectNum:Int)(im
   XSPerfAccumulate("load_load_redirect_num", io.redirectOut.valid && io.redirectOut.bits.isLoadLoad)
   XSPerfAccumulate("exception_redirect_num", io.redirectOut.valid && io.redirectOut.bits.isException)
   XSPerfAccumulate("flush_redirect_num", io.redirectOut.valid && io.redirectOut.bits.isFlushPipe)
+  XSPerfAccumulate("redirect_s2_new_s1", s2_redirectValid && s1_redirectValid && s1_exuOutSel.bits.uop.robIdx < s2_uopReg.robIdx)
+  XSPerfAccumulate("redirect_s3_new_s1", s1_redirectValid && io.redirectOut.bits.isLoadLoad && s1_exuOutSel.bits.uop.robIdx < io.redirectOut.bits.robIdx)
+  XSPerfAccumulate("redirect_s3_new_s2", io.redirectOut.valid && s2_redirectValid && s2_uopReg.robIdx < io.redirectOut.bits.robIdx)
 }

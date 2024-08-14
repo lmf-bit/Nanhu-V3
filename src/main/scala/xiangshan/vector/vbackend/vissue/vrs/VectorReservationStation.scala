@@ -71,13 +71,13 @@ class VectorReservationStationImpl(outer:VectorReservationStation, param:RsParam
   private val oiq = Module(new OrderedInstructionQueue(param.bankNum, vectorParameters.vRsOIQDepth))
   oiq.io.redirect := io.redirect
 
-  private val integerBusyTable = Module(new BusyTable(NRPhyRegs, param.bankNum, wakeupInt.length, RenameWidth))
+  private val integerBusyTable = Module(new BusyTable(NRPhyRegs, param.bankNum, wakeupInt.length, RenameWidth, true))
   integerBusyTable.io.allocPregs := io.intAllocPregs
   integerBusyTable.io.wbPregs.zip(wakeupInt).foreach({case(bt, wb) =>
     bt.valid := wb.valid && wb.bits.destType === SrcType.reg
     bt.bits := wb.bits.pdest
   })
-  private val floatingBusyTable = Module(new BusyTable(NRPhyRegs, param.bankNum, wakeupFp.length, RenameWidth))
+  private val floatingBusyTable = Module(new BusyTable(NRPhyRegs, param.bankNum, wakeupFp.length, RenameWidth, true))
   floatingBusyTable.io.allocPregs := io.fpAllocPregs
   floatingBusyTable.io.wbPregs.zip(wakeupFp).foreach({ case (bt, wb) =>
     bt.valid := wb.valid && wb.bits.destType === SrcType.fp

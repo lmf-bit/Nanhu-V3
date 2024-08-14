@@ -23,7 +23,7 @@ trait VDecodeUnitConstants
 }
 class VDecodeUnit(implicit p: Parameters) extends XSModule with VDecodeUnitConstants {
   val io = IO(new Bundle{
-    val in = Input(new CfCtrl)
+    val in = Input(new MicroOp)
     val out = Output(new MicroOp)
   })
 

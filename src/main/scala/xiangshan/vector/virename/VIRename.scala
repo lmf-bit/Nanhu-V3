@@ -45,6 +45,7 @@ class VIRename(implicit p: Parameters) extends VectorBaseModule {
     })
     //commit, from ROB
     val commit = Flipped(new RobCommitIO)
+    val rabCommit = Input(new RabCommitIO)
     val exception = Input(Valid(new ExceptionInfo))
     val debug = Output(Vec(32, UInt(VIPhyRegIdxWidth.W)))
   })
@@ -133,6 +134,7 @@ class VIRename(implicit p: Parameters) extends VectorBaseModule {
   //-------------------------------------------- TODO: commit & walk --------------------------------------------
   private val rollbackDelay = vrob.io.commit.rat.Pipe
   vrob.io.commit.rob <> io.commit
+  vrob.io.commit.rab <> io.rabCommit
   vrob.io.exception := Pipe(io.exception)
   renameTable.io.commit := rollbackDelay
 

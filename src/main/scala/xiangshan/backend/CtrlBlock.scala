@@ -34,8 +34,8 @@ import xiangshan.vector.VectorCtrlBlock
 import xiangshan.backend.decode.{DecodeStage, FusionDecoder}
 import xiangshan.backend.dispatch.{Dispatch, DispatchQueue, MemDispatch2Rs}
 import xiangshan.backend.execute.fu.csr.PFEvent
-import xiangshan.backend.rename.{Rename, RenameTableWrapper}
-import xiangshan.backend.rob.{Rob, RobCSRIO, RobLsqIO, RobPtr}
+import xiangshan.backend.rename.{Rename, RenameTableWrapper, SnapshotGenerator}
+import xiangshan.backend.rob.{Rob, RobCSRIO, RobLsqIO, RobPtr, RollBackList}
 import xiangshan.backend.issue.DqDispatchNode
 import xiangshan.backend.execute.fu.csr.vcsr._
 import xs.utils.perf.HasPerfLogging
@@ -129,9 +129,8 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
 
   //Dec-Rename Pipeline
   private val pipeHolds_dup = RegInit(VecInit(Seq.fill(DecodeWidth)(false.B)))
-  private val decPipe = Module(new PipelineRouter(new CfCtrl, DecodeWidth, 2))
-  decPipe.io.holds := pipeHolds_dup
-
+  private val decQueue = Module(new RouterQueue(DecodeWidth, 2, 4 * DecodeWidth))
+  
   //Rename
   private val rename = Module(new Rename)
   private val rat = Module(new RenameTableWrapper)
@@ -146,12 +145,13 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
   private val memDispatch2Rs = Module(new MemDispatch2Rs)
 
   //DispatchQueue
-  private val intDq = Module(new DispatchQueue(RenameWidth * 4, RenameWidth, intDispatch._2.bankNum))
-  private val fpDq = Module(new DispatchQueue(RenameWidth * 4, RenameWidth, fpDispatch._2.bankNum))
-  private val lsDq = Module(new DispatchQueue(RenameWidth * 4, RenameWidth, lsDispatch._2.bankNum))
+  private val intDq = Module(new DispatchQueue(RenameWidth * 2, RenameWidth, intDispatch._2.bankNum))
+  private val fpDq = Module(new DispatchQueue(RenameWidth * 2, RenameWidth, fpDispatch._2.bankNum))
+  private val lsDq = Module(new DispatchQueue(RenameWidth * 2, RenameWidth, lsDispatch._2.bankNum))
 
   //ROB
   private val rob = outer.rob.module
+//  private val rollbacklist = Module(new RollBackList(RblSize))
 
   //Vector
   private val vCtrlBlock = Module(new VectorCtrlBlock(vdWidth, vpdWidth, mempdWidth))
@@ -183,43 +183,8 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
     pendingRedirect := false.B
   }
 
-  if (env.EnableTopDown) {
-    val stage2Redirect_valid_when_pending = pendingRedirect && redirectDelay.valid
-
-    val stage2_redirect_cycles = RegInit(false.B)                                         // frontend_bound->fetch_lantency->stage2_redirect
-    val MissPredPending = RegInit(false.B); val branch_resteers_cycles = RegInit(false.B) // frontend_bound->fetch_lantency->stage2_redirect->branch_resteers
-    val RobFlushPending = RegInit(false.B); val robFlush_bubble_cycles = RegInit(false.B) // frontend_bound->fetch_lantency->stage2_redirect->robflush_bubble
-    val LdReplayPending = RegInit(false.B); val ldReplay_bubble_cycles = RegInit(false.B) // frontend_bound->fetch_lantency->stage2_redirect->ldReplay_bubble
-    
-    when(redirectDelay.valid && redirectDelay.bits.cfiUpdate.isMisPred) { MissPredPending := true.B }
-    when(redirectDelay.valid && redirectDelay.bits.isFlushPipe)  { RobFlushPending := true.B }
-    when(redirectDelay.valid && redirectDelay.bits.isLoadLoad)  { LdReplayPending := true.B }
-    
-    when (RegNext(io.frontend.toFtq.redirect.valid)) {
-      when(pendingRedirect) {                             stage2_redirect_cycles := true.B }
-      when(MissPredPending) { MissPredPending := false.B; branch_resteers_cycles := true.B }
-      when(RobFlushPending) { RobFlushPending := false.B; robFlush_bubble_cycles := true.B }
-      when(LdReplayPending) { LdReplayPending := false.B; ldReplay_bubble_cycles := true.B }
-    }
-
-    when(VecInit(decode.io.out.map(x => x.valid)).asUInt.orR){
-      when(stage2_redirect_cycles) { stage2_redirect_cycles := false.B }
-      when(branch_resteers_cycles) { branch_resteers_cycles := false.B }
-      when(robFlush_bubble_cycles) { robFlush_bubble_cycles := false.B }
-      when(ldReplay_bubble_cycles) { ldReplay_bubble_cycles := false.B }
-    }
-
-    XSPerfAccumulate("stage2_redirect_cycles", stage2_redirect_cycles)
-    XSPerfAccumulate("branch_resteers_cycles", branch_resteers_cycles)
-    XSPerfAccumulate("robFlush_bubble_cycles", robFlush_bubble_cycles)
-    XSPerfAccumulate("ldReplay_bubble_cycles", ldReplay_bubble_cycles)
-    XSPerfAccumulate("s2Redirect_pend_cycles", stage2Redirect_valid_when_pending)
-  }
-
   //Decode
   decode.io.in      <> io.frontend.cfVec
-  decode.io.intRat  <> rat.io.intReadPorts
-  decode.io.fpRat   <> rat.io.fpReadPorts
   decode.io.csrCtrl := RegNext(io.csrCtrl)
 
   // memory dependency predict
@@ -253,57 +218,77 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
   for(((v, info), i) <- (commitScalar.commitValid zip commitScalar.info).zipWithIndex) {
     v := (!info.vecWen) && rob.io.commits.commitValid(i)
   }
+  val rabCommitScalar  = Wire(new RabCommitIO)
+  rabCommitScalar := rob.io.rabCommits
+  for(((v, info), i) <- (rabCommitScalar.commitValid zip rabCommitScalar.info).zipWithIndex) {
+    v := (!info.vecWen) && rob.io.rabCommits.commitValid(i)
+  }
+  rename.io.intRat <> rat.io.intReadPorts
+  rename.io.fpRat <> rat.io.fpReadPorts
+  rat.io.redirect       := redirectDelay.valid
   rat.io.robCommits     := commitScalar
+  rat.io.rabCommits     := rabCommitScalar
   rat.io.intRenamePorts := rename.io.intRenamePorts
   rat.io.fpRenamePorts  := rename.io.fpRenamePorts
-
+  rename.io.int_need_free := rat.io.int_need_free
+  rename.io.int_old_pdest := rat.io.int_old_pdest
+  rename.io.fp_old_pdest := rat.io.fp_old_pdest
+  rat.io.diffCommits.foreach(_ := rob.io.diffCommits.get)
   //for debug
   io.debug_int_rat  := rat.io.debug_int_rat
   io.debug_fp_rat   := rat.io.debug_fp_rat
 
-  decPipe.io.flush := redirectDelay.valid || pendingRedirect
-  decPipe.io.in <> decode.io.out
+  decQueue.io.redirect := redirectDelay
+  decQueue.io.flush := pendingRedirect
+  decQueue.io.robempty := rob.io.enq.isEmpty
+  decQueue.io.singleStep := RegNext(io.csrCtrl.singlestep)
 
   // pipeline between decode and rename
   for (i <- 0 until RenameWidth) {
     // fusion decoder
-    val decodeHasException = io.frontend.cfVec(i).bits.exceptionVec(instrPageFault) || io.frontend.cfVec(i).bits.exceptionVec(instrAccessFault)
+    val decodeHasException = decode.io.out(i).bits.cf.exceptionVec(instrPageFault) || decode.io.out(i).bits.cf.exceptionVec(instrAccessFault)
     val disableFusion = decode.io.csrCtrl.singlestep || !decode.io.csrCtrl.fusion_enable
-    fusionDecoder.io.in(i).valid := io.frontend.cfVec(i).valid && !(decodeHasException || disableFusion)
-    fusionDecoder.io.in(i).bits := io.frontend.cfVec(i).bits.instr
+    fusionDecoder.io.in(i).valid := decode.io.out(i).valid && !(decodeHasException || disableFusion)
+    fusionDecoder.io.in(i).bits := decode.io.out(i).bits.cf.instr
+    decQueue.io.in(i).valid := decode.io.out(i).valid && !fusionDecoder.io.clear(i)
+    decQueue.io.in(i).bits  := decode.io.out(i).bits
+    decode.io.out(i).ready := decQueue.io.in(i).ready
+    // decqueue allow one instr enq but has fusion with next one
     if (i > 0) {
       fusionDecoder.io.inReady(i - 1) := decode.io.out(i).ready
+      decode.io.out(i).ready := decQueue.io.in(i).ready || (decQueue.io.in(i - 1).ready && fusionDecoder.io.clear(i))
     }
-
     // Pipeline
-    val renamePipe = decPipe.io.out(0)(i)
+    val renamePipe = decQueue.io.out(0)(i)
     renamePipe.ready := rename.io.in(i).ready
-    rename.io.in(i).valid := renamePipe.valid && !fusionDecoder.io.clear(i) && !rename.io.redirect.valid
+    rename.io.in(i).valid := renamePipe.valid && !rename.io.redirect.valid
     rename.io.in(i).bits  := renamePipe.bits
     rename.io.intReadPorts(i) := rat.io.intReadPorts(i).map(_.data)
     rename.io.fpReadPorts(i)  := rat.io.fpReadPorts(i).map(_.data)
     rename.io.waittable(i)    := RegEnable(waittable.io.rdata(i), decode.io.out(i).fire)
-    rename.io.allowIn := decPipe.io.allowOut(0) && !rename.io.redirect.valid
-
+    rename.io.allowIn := decQueue.io.allowOut(0) && !rename.io.redirect.valid
     if (i < RenameWidth - 1) {
       // fusion decoder sees the raw decode info
-      fusionDecoder.io.dec(i) := renamePipe.bits.ctrl
-      rename.io.fusionInfo(i) := fusionDecoder.io.info(i)
-
+      fusionDecoder.io.dec(i) := decode.io.out(i).bits.ctrl
       // update the first RenameWidth - 1 instructions
-      decode.io.fusion(i) := fusionDecoder.io.out(i).valid && rename.io.out(i).fire
+      decode.io.fusion(i) := fusionDecoder.io.out(i).valid && decQueue.io.in(i).fire
       when (fusionDecoder.io.out(i).valid) {
-        fusionDecoder.io.out(i).bits.update(rename.io.in(i).bits.ctrl)
+        fusionDecoder.io.out(i).bits.update(decQueue.io.in(i).bits.ctrl)
+        when(fusionDecoder.io.info(i).rs2FromRs2 || fusionDecoder.io.info(i).rs2FromRs1) {
+          decQueue.io.in(i).bits.ctrl.lsrc(1) := Mux(fusionDecoder.io.info(i).rs2FromRs2, decode.io.out(i + 1).bits.ctrl.lsrc(1), decode.io.out(i + 1).bits.ctrl.lsrc(0))
+        }.elsewhen(fusionDecoder.io.info(i).rs2FromZero) {
+          decQueue.io.in(i).bits.ctrl.lsrc(1) := 0.U
+        }
         // TODO: remove this dirty code for ftq update
-        val sameFtqPtr = rename.io.in(i).bits.cf.ftqPtr.value === rename.io.in(i + 1).bits.cf.ftqPtr.value
-        val ftqOffset0 = rename.io.in(i).bits.cf.ftqOffset
-        val ftqOffset1 = rename.io.in(i + 1).bits.cf.ftqOffset
+        val sameFtqPtr = decode.io.out(i).bits.cf.ftqPtr.value === decode.io.out(i + 1).bits.cf.ftqPtr.value
+        val ftqOffset0 = decode.io.out(i).bits.cf.ftqOffset
+        val ftqOffset1 = decode.io.out(i + 1).bits.cf.ftqOffset
         val ftqOffsetDiff = ftqOffset1 - ftqOffset0
         val cond1 = sameFtqPtr && ftqOffsetDiff === 1.U
         val cond2 = sameFtqPtr && ftqOffsetDiff === 2.U
         val cond3 = !sameFtqPtr && ftqOffset1 === 0.U
         val cond4 = !sameFtqPtr && ftqOffset1 === 1.U
-        rename.io.in(i).bits.ctrl.commitType := Mux(cond1, 4.U, Mux(cond2, 5.U, Mux(cond3, 6.U, 7.U)))
+        decQueue.io.in(i).bits.ctrl.commitType := Mux(cond1, 4.U, Mux(cond2, 5.U, Mux(cond3, 6.U, 7.U)))
         XSError(!cond1 && !cond2 && !cond3 && !cond4, p"new condition $sameFtqPtr $ftqOffset0 $ftqOffset1\n")
       }
     }
@@ -311,17 +296,68 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
 
   rename.io.redirect    := Pipe(io.redirectIn)
   rename.io.robCommits  := commitScalar
+  rename.io.rabCommits  := rabCommitScalar
   rename.io.ssit        := ssit.io.rdata
-  rename.io.vcsrio    <> io.vcsrToRename
-  rename.io.vlUpdate := Pipe(wbMergeBuffer.io.vlUpdate, 2)
+  rename.io.vcsrio      <> io.vcsrToRename
+  rename.io.vlUpdate    := Pipe(wbMergeBuffer.io.vlUpdate, 2)
+  rename.io.enqRob      <> rob.io.enq
+  rename.io.out         <> dispatch.io.fromRename
 
-  //pipeline between rename and dispatch
-  private val flushRenamePipe = Wire(Bool())
-  for (d <- 0 until RenameWidth) {
-    for (i <- 0 until RenameWidth) {
-      PipelineConnect(rename.io.out(i), dispatch.io.fromRename(d)(i), dispatch.io.recv(i), flushRenamePipe)
-    }
+  // snapshot check
+  class CFIRobIdx extends Bundle {
+    val robIdx = Vec(RenameWidth, new RobPtr)
+    val isCFI = Vec(RenameWidth, Bool())
   }
+
+  val genSnapshot = Cat(rename.io.out.map(out => out.fire && out.bits.snapshot)).orR
+  val snpt = Module(new SnapshotGenerator(0.U.asTypeOf(new CFIRobIdx)))
+  snpt.io.enq := genSnapshot
+  snpt.io.enqData.robIdx := rename.io.out.map(_.bits.robIdx)
+  snpt.io.enqData.isCFI := rename.io.out.map(_.bits.snapshot)
+  snpt.io.deq := snpt.io.valids(snpt.io.deqPtr.value) && rob.io.commits.isCommit &&
+    Cat(rob.io.commits.commitValid.zip(rob.io.commits.robIdx).map(x => x._1 && x._2 === snpt.io.snapshots(snpt.io.deqPtr.value).robIdx.head)).orR
+  snpt.io.redirect := redirectDelay.valid
+  val flushVec = VecInit(snpt.io.snapshots.map { snapshot =>
+    val notCFIMask = snapshot.isCFI.map(~_)
+    val redirectTrueRobptr = redirectDelay.bits.robIdx - redirectDelay.bits.flushItself()
+    val shouldFlush = snapshot.robIdx.map(robIdx => robIdx > redirectTrueRobptr)
+    val shouldFlushMask = (1 to RenameWidth).map(shouldFlush take _ reduce (_ || _))
+    redirectDelay.valid && Cat(shouldFlushMask.zip(notCFIMask).map(x => x._1 | x._2)).andR
+  })
+  val flushVecNext = flushVec zip snpt.io.valids map (x => RegNext(x._1 && x._2, false.B))
+  snpt.io.flushVec := flushVecNext
+
+  val useSnpt = VecInit.tabulate(RenameSnapshotNum)(idx =>
+    snpt.io.valids(idx) && (redirectDelay.bits.robIdx > snpt.io.snapshots(idx).robIdx.head ||
+      !redirectDelay.bits.flushItself() && redirectDelay.bits.robIdx === snpt.io.snapshots(idx).robIdx.head)
+  ).reduceTree(_ || _)
+  val snptSelect = MuxCase(
+    0.U(log2Ceil(RenameSnapshotNum).W),
+    (1 to RenameSnapshotNum).map(i => (snpt.io.enqPtr - i.U).value).map(idx =>
+      (snpt.io.valids(idx) && (redirectDelay.bits.robIdx > snpt.io.snapshots(idx).robIdx.head ||
+        !redirectDelay.bits.flushItself() && redirectDelay.bits.robIdx === snpt.io.snapshots(idx).robIdx.head), idx)
+    )
+  )
+
+  rename.io.snpt.snptEnq := DontCare
+  rename.io.snpt.snptDeq := snpt.io.deq
+  rename.io.snpt.useSnpt := useSnpt
+  rename.io.snpt.snptSelect := snptSelect
+  rename.io.snptIsFull := snpt.io.valids.asUInt.andR
+  rename.io.snpt.flushVec := flushVecNext
+  rename.io.snptLastEnq.valid := !isEmpty(snpt.io.enqPtr, snpt.io.deqPtr)
+  rename.io.snptLastEnq.bits := snpt.io.snapshots((snpt.io.enqPtr - 1.U).value).robIdx.head
+
+  rob.io.snpt.snptEnq := DontCare
+  rob.io.snpt.snptDeq := snpt.io.deq
+  rob.io.snpt.useSnpt := useSnpt
+  rob.io.snpt.snptSelect := snptSelect
+  rob.io.snpt.flushVec := flushVecNext
+  rat.io.snpt.snptEnq := genSnapshot
+  rat.io.snpt.snptDeq := snpt.io.deq
+  rat.io.snpt.useSnpt := useSnpt
+  rat.io.snpt.snptSelect := snptSelect
+  rat.io.snpt.flushVec := flushVec
 
   //vector instr from scalar
   require(RenameWidth == VIDecodeWidth)
@@ -350,30 +386,38 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
       wv := DontCare
     }
   }
-  commitVector.isExtraWalk := rob.io.commits.isExtraWalk
+  commitVector.isExtraWalk := false.B
+  val rabCommitVector = Wire(new RabCommitIO)
+  rabCommitVector := rob.io.rabCommits
+  (rabCommitVector.commitValid zip rabCommitVector.walkValid).zip(rabCommitVector.info).zipWithIndex.foreach {
+    case (((cv, wv), info), i) => {
+      cv := info.vecWen && rob.io.rabCommits.commitValid(i)
+      wv := info.vecWen && rob.io.rabCommits.walkValid(i)
+      wv := DontCare
+    }
+  }
 
   vCtrlBlock.io.commit := commitVector.Pipe
+  vCtrlBlock.io.rabCommit := rabCommitVector.Pipe
+
   vCtrlBlock.io.exception := Pipe(rob.io.exception)
   vCtrlBlock.io.redirect := io.redirectIn
   vCtrlBlock.io.vstart := io.vstart
 
   io.vAllocPregs := vCtrlBlock.io.vAllocPregs
 
-  vCtrlBlock.io.in <> decPipe.io.out(1)
-  vCtrlBlock.io.allowIn := decPipe.io.allowOut(1)
+  vCtrlBlock.io.in <> decQueue.io.out(1)
+  vCtrlBlock.io.allowIn := decQueue.io.allowOut(1)
   
   vDeq  <> vCtrlBlock.io.vDispatch
   vpDeq <> vCtrlBlock.io.vpDispatch
 
   dispatch.io.hartId := io.hartId
   dispatch.io.redirect := redirectDelay
-  //  dispatch.io.toIntDq <> intDq.io.enq
   intDq.io.enq.req := dispatch.io.toIntDq.req
   intDq.io.enq.needAlloc := dispatch.io.toIntDq.needAlloc
-//  dispatch.io.toFpDq <> fpDq.io.enq
   fpDq.io.enq.req := dispatch.io.toFpDq.req
   fpDq.io.enq.needAlloc := dispatch.io.toFpDq.needAlloc
-//  dispatch.io.toLsDq <> lsDq.io.enq
   lsDq.io.enq.req := dispatch.io.toLsDq.req
   lsDq.io.enq.needAlloc := dispatch.io.toLsDq.needAlloc
   for (i <- 1 until DecodeWidth) {
@@ -385,24 +429,21 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
   dispatch.io.toFpDq.canAccept(0) := fpDq.io.enq.canAccept
   dispatch.io.toLsDq.canAccept(0) := lsDq.io.enq.canAccept
   dispatch.io.allocPregs <> io.allocPregs
-  dispatch.io.singleStep := RegNext(io.csrCtrl.singlestep)
-  dispatch.io.enqRob <> rob.io.enq
+//  dispatch.io.singleStep := RegNext(io.csrCtrl.singlestep)
   dispatch.io.vstart := RegNext(io.vstart)
 
   private val redirectDelay_dup_0 = Pipe(io.redirectIn)
-  private val redirectDelay_dup_1 = Pipe(io.redirectIn)
-  private val redirectDelay_dup_2 = Pipe(io.redirectIn)
   private val redirectDelay_dup_3 = Pipe(io.redirectIn)
   private val redirectDelay_dup_4 = Pipe(io.redirectIn)
   intDq.io.redirect := redirectDelay_dup_0
+  intDq.io.redirect_dup := redirectDelay_dup_3
   fpDq.io.redirect := redirectDelay_dup_0
+  fpDq.io.redirect_dup := redirectDelay_dup_3
   lsDq.io.redirect := redirectDelay_dup_0
-  intDq.io.redirect_dup := redirectDelay_dup_1
-  fpDq.io.redirect_dup := redirectDelay_dup_2
   lsDq.io.redirect_dup := redirectDelay_dup_3
 
-  intDeq <> intDq.io.deq
-  fpDeq <> fpDq.io.deq
+  intDq.io.deq <> intDeq
+  fpDq.io.deq <> fpDeq
 
   //mem and vmem dispatch merge
   memDqArb.io.memIn <> lsDq.io.deq
@@ -424,14 +465,13 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
   io.cpu_halt := DelayN(rob.io.cpu_halt, 5)
   private val robRedirect = Pipe(io.redirectIn)
   private val robPreWalk = Pipe(io.preWalk)
-  rob.io.redirect.valid := robRedirect.valid | robPreWalk.valid
-  rob.io.redirect.bits := Mux(robRedirect.valid, robRedirect.bits, robPreWalk.bits)
+  rob.io.redirect := robRedirect
+  // rob.io.redirect.bits := Mux(robRedirect.valid, robRedirect.bits, robPreWalk.bits)
   when(io.redirectIn.valid) {
     pipeHolds_dup.foreach(_ := false.B)
   }.elsewhen(io.preWalk.valid) {
     pipeHolds_dup.foreach(_ := true.B)
   }
-  flushRenamePipe := robRedirect.valid | robPreWalk.valid
   private val preWalkDbgValid = RegInit(false.B)
   private val preWalkDbgBits = RegEnable(io.preWalk.bits, io.preWalk.valid)
   when(robRedirect.valid) {
@@ -458,16 +498,75 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
   // rob to mem block
   io.robio.lsq <> rob.io.lsq
 
+  // performance counter
+  if (env.EnableTopDown) {
+    val stage2Redirect_valid_when_pending = pendingRedirect && redirectDelay.valid
+
+    val stage2_redirect_cycles = RegInit(false.B) // frontend_bound->fetch_lantency->stage2_redirect
+    val MissPredPending = RegInit(false.B);
+    val branch_resteers_cycles = RegInit(false.B) // frontend_bound->fetch_lantency->stage2_redirect->branch_resteers
+    val RobFlushPending = RegInit(false.B);
+    val robFlush_bubble_cycles = RegInit(false.B) // frontend_bound->fetch_lantency->stage2_redirect->robflush_bubble
+    val LdReplayPending = RegInit(false.B);
+    val ldReplay_bubble_cycles = RegInit(false.B) // frontend_bound->fetch_lantency->stage2_redirect->ldReplay_bubble
+
+    when(redirectDelay.valid && redirectDelay.bits.cfiUpdate.isMisPred) {
+      MissPredPending := true.B
+    }
+    when(redirectDelay.valid && redirectDelay.bits.isFlushPipe) {
+      RobFlushPending := true.B
+    }
+    when(redirectDelay.valid && redirectDelay.bits.isLoadLoad) {
+      LdReplayPending := true.B
+    }
+
+    when(RegNext(io.frontend.toFtq.redirect.valid)) {
+      when(pendingRedirect) {
+        stage2_redirect_cycles := true.B
+      }
+      when(MissPredPending) {
+        MissPredPending := false.B; branch_resteers_cycles := true.B
+      }
+      when(RobFlushPending) {
+        RobFlushPending := false.B; robFlush_bubble_cycles := true.B
+      }
+      when(LdReplayPending) {
+        LdReplayPending := false.B; ldReplay_bubble_cycles := true.B
+      }
+    }
+
+    when(VecInit(decode.io.out.map(x => x.valid)).asUInt.orR) {
+      when(stage2_redirect_cycles) {
+        stage2_redirect_cycles := false.B
+      }
+      when(branch_resteers_cycles) {
+        branch_resteers_cycles := false.B
+      }
+      when(robFlush_bubble_cycles) {
+        robFlush_bubble_cycles := false.B
+      }
+      when(ldReplay_bubble_cycles) {
+        ldReplay_bubble_cycles := false.B
+      }
+    }
+
+    XSPerfAccumulate("stage2_redirect_cycles", stage2_redirect_cycles)
+    XSPerfAccumulate("branch_resteers_cycles", branch_resteers_cycles)
+    XSPerfAccumulate("robFlush_bubble_cycles", robFlush_bubble_cycles)
+    XSPerfAccumulate("ldReplay_bubble_cycles", ldReplay_bubble_cycles)
+    XSPerfAccumulate("s2Redirect_pend_cycles", stage2Redirect_valid_when_pending)
+  }
+
   io.perfInfo.ctrlInfo.robFull := RegNext(rob.io.robFull)
-  io.perfInfo.ctrlInfo.intdqFull := RegNext(intDq.io.dqFull)
-  io.perfInfo.ctrlInfo.fpdqFull := RegNext(fpDq.io.dqFull)
+  io.perfInfo.ctrlInfo.intdqFull := false.B
+  io.perfInfo.ctrlInfo.fpdqFull := false.B
   io.perfInfo.ctrlInfo.lsdqFull := RegNext(lsDq.io.dqFull)
 
   private val pfevent = Module(new PFEvent)
   pfevent.io.distribute_csr := RegNext(io.csrCtrl.distribute_csr)
   private val csrevents = pfevent.io.hpmevent.slice(8,16)
 
-  private val perfFromUnits = Seq(decode, rename, dispatch, intDq, fpDq, lsDq, rob).flatMap(_.getPerfEvents)
+  private val perfFromUnits = Seq(decode, rename, dispatch, lsDq, rob).flatMap(_.getPerfEvents)
   private val perfFromIO    = Seq()
   private val perfBlock     = Seq()
   // let index = 0 be no event
@@ -477,6 +576,16 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
     for (((name, inc), i) <- allPerfEvents.zipWithIndex) {
       println("CtrlBlock perfEvents Set", name, inc, i)
     }
+  }
+
+  private val decodeInWithBubble = PopCount(io.frontend.cfVec.zipWithIndex.map{case (decin,i) => decin.ready && !decin.valid})
+  private val renameInWithBubble = PopCount(rename.io.in.zipWithIndex.map{case (renin,i) => renin.ready && !renin.valid})
+  private val dispatchInWithBubble = PopCount(dispatch.io.fromRename.zipWithIndex.map{case (disin,i) => disin.ready && !disin.valid})
+
+  if(printEventCoding){
+    XSPerfAccumulate("decodeInWithBubbleNum", decodeInWithBubble)
+    XSPerfAccumulate("renameInWithBubbleNum", renameInWithBubble)
+    XSPerfAccumulate("dispatchInWithBubbleNum", dispatchInWithBubble)
   }
 
   private val allPerfInc = allPerfEvents.map(_._2.asTypeOf(new PerfEvent))

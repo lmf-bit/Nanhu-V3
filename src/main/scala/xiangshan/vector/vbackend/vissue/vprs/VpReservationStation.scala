@@ -83,13 +83,13 @@ class VpReservationStationImpl(outer:VpReservationStation, param:RsParam) extend
   }))
   private val scalarWakeupSignals = VecInit(intWakeupSignals ++ fpWakeupSignals)
 
-  private val integerBusyTable = Module(new BusyTable(NRPhyRegs, param.bankNum, intWkps.length, RenameWidth))
+  private val integerBusyTable = Module(new BusyTable(NRPhyRegs, param.bankNum, intWkps.length, RenameWidth, true))
   integerBusyTable.io.allocPregs := io.intAllocPregs
   integerBusyTable.io.wbPregs.zip(intWakeupSignals).foreach({case(bt, wb) =>
     bt.valid := wb.valid && wb.bits.destType === SrcType.reg
     bt.bits := wb.bits.pdest
   })
-  private val floatingBusyTable = Module(new BusyTable(NRPhyRegs, param.bankNum, fpWkps.length, RenameWidth))
+  private val floatingBusyTable = Module(new BusyTable(NRPhyRegs, param.bankNum, fpWkps.length, RenameWidth, true))
   floatingBusyTable.io.allocPregs := io.fpAllocPregs
   floatingBusyTable.io.wbPregs.zip(fpWakeupSignals).foreach({ case (bt, wb) =>
     bt.valid := wb.valid && wb.bits.destType === SrcType.fp

@@ -29,42 +29,57 @@ import xiangshan.backend.execute.fu.jmp.JumpOpType
 import xiangshan.backend.execute.fu.FuOutput
 import xiangshan.backend.execute.fu.csr.CSROpType
 import xiangshan.backend.execute.fu.csr.vcsr.VCSRWithVtypeRenameIO
-import xiangshan.backend.rob.RobPtr
+import xiangshan.backend.rob.{RobEnqIO, RobPtr}
 import xiangshan.mem.mdp._
 import xiangshan.vector.SIRenameInfo
 import xiangshan.vector.vtyperename.{VtpToVCtl, VtypeRename}
 import xs.utils.perf.HasPerfLogging
+import xs.utils.HasCircularQueuePtrHelper
+import xiangshan.ExceptionNO.selectFrontend
+import xiangshan.ExceptionNO.illegalInstr
 
-class Rename(implicit p: Parameters) extends XSModule with HasPerfEvents with HasPerfLogging{
+class Rename(implicit p: Parameters) extends XSModule  with HasCircularQueuePtrHelper with HasPerfEvents with HasPerfLogging {
   val io = IO(new Bundle() {
     val redirect = Flipped(ValidIO(new Redirect))
     val robCommits = Flipped(new RobCommitIO)
+    val rabCommits = Flipped(new RabCommitIO)
     // from decode
-    val in = Vec(RenameWidth, Flipped(DecoupledIO(new CfCtrl)))
+    val in = Vec(RenameWidth, Flipped(DecoupledIO(new MicroOp)))
     val allowIn = Input(Bool())
-    val fusionInfo = Vec(DecodeWidth - 1, Flipped(new FusionDecodeInfo))
+//    val fusionInfo = Vec(DecodeWidth - 1, Flipped(new FusionDecodeInfo))
     // ssit read result
     val ssit = Flipped(Vec(RenameWidth, Output(new SSITEntry)))
     // waittable read result
     val waittable = Flipped(Vec(RenameWidth, Output(Bool())))
+    // RAT read
+    val intRat = Vec(RenameWidth, Vec(3, Flipped(new RatReadPort)))
+    val fpRat = Vec(RenameWidth, Vec(4, Flipped(new RatReadPort)))
     // to rename table
     val intReadPorts  = Vec(RenameWidth, Vec(3, Input(UInt(PhyRegIdxWidth.W))))
     val fpReadPorts   = Vec(RenameWidth, Vec(4, Input(UInt(PhyRegIdxWidth.W))))
     val intRenamePorts  = Vec(RenameWidth, Output(new RatWritePort))
     val fpRenamePorts   = Vec(RenameWidth, Output(new RatWritePort))
+    // from rename table
+    val int_old_pdest = Vec(RabCommitWidth, Input(UInt(PhyRegIdxWidth.W)))
+    val int_need_free = Vec(RabCommitWidth, Input(Bool()))
+    val fp_old_pdest = Vec(RabCommitWidth, Input(UInt(PhyRegIdxWidth.W)))
     // to dispatch1
     val out = Vec(RenameWidth, DecoupledIO(new MicroOp))
+    // enq Rob
+    val enqRob = Flipped(new RobEnqIO)
     // to vector
     val toVCtl = Output(Vec(RenameWidth, new VtpToVCtl))
     val vcsrio  = Flipped(new VCSRWithVtypeRenameIO)
-
+    // for snapshots
+    val snpt = Input(new SnapshotPort)
+    val snptLastEnq = Flipped(ValidIO(new RobPtr))
+    val snptIsFull= Input(Bool())
     val vlUpdate = Input(Valid(UInt(log2Ceil(VLEN + 1).W)))
     val dispatchIn = Vec(RenameWidth, Input(Valid(new RobPtr)))
   })
 
   // create free list and rat
   val intFreeList = Module(new MEFreeList(NRPhyRegs))
-  val intRefCounter = Module(new RefCounter(NRPhyRegs))
   val fpFreeList = Module(new StdFreeList(NRPhyRegs - 32))
   val vtyperename = Module(new VtypeRename)
   vtyperename.io.redirect := io.redirect
@@ -72,45 +87,52 @@ class Rename(implicit p: Parameters) extends XSModule with HasPerfEvents with Ha
   vtyperename.io.vlUpdate := io.vlUpdate
   vtyperename.io.dispatchIn := io.dispatchIn
   io.toVCtl := vtyperename.io.toVCtl
+
   // decide if given instruction needs allocating a new physical register (CfCtrl: from decode; RobCommitInfo: from rob)
   def needDestReg[T <: CfCtrl](fp: Boolean, x: T): Bool = {
       if(fp) x.ctrl.fpWen
       else (x.ctrl.rfWen && (x.ctrl.ldest =/= 0.U))
   }
-  def needDestRegCommit[T <: RobCommitInfo](fp: Boolean, x: T): Bool = {
-    if(fp) x.fpWen
-    else x.rfWen
-  }
 
   // connect [redirect + walk] ports for __float point__ & __integer__ free list
-  Seq((fpFreeList, true), (intFreeList, false)).foreach {
-    case (fl, isFp) =>
+  Seq((fpFreeList), (intFreeList)).foreach {
+    case (fl) =>
       fl.io.redirect := io.redirect.valid
-      fl.io.walk := io.robCommits.isWalk
-      // when isWalk, use stepBack to restore head pointer of free list
-      // (if ME enabled, stepBack of intFreeList should be useless thus optimized out)
-      fl.io.stepBack := PopCount(io.robCommits.walkValid.zip(io.robCommits.info).map{
-        case (v, i) => v && needDestRegCommit(isFp, i)
-      })
+      fl.io.walk := io.rabCommits.isWalk
+      fl.io.rabCommit := io.rabCommits
+  }
+  for (i <- 0 until RabCommitWidth) {
+    intFreeList.io.walkReq(i) := io.rabCommits.walkValid(i) && io.rabCommits.info(i).rfWen && !io.rabCommits.info(i).isMove && io.rabCommits.info(i).ldest =/= 0.U
+    fpFreeList.io.walkReq(i) := io.rabCommits.walkValid(i) && io.rabCommits.info(i).fpWen
   }
   // walk has higher priority than allocation and thus we don't use isWalk here
   // only when both fp and int free list and dispatch1 has enough space can we do allocation
-  intFreeList.io.doAllocate := fpFreeList.io.canAllocate && vtyperename.io.canAccept && io.out(0).ready
-  fpFreeList.io.doAllocate := intFreeList.io.canAllocate && vtyperename.io.canAccept && io.out(0).ready
+  intFreeList.io.doAllocate := fpFreeList.io.canAllocate && vtyperename.io.canAccept && io.out(0).ready && io.enqRob.canAccept || io.rabCommits.isWalk
+  fpFreeList.io.doAllocate := intFreeList.io.canAllocate && vtyperename.io.canAccept && io.out(0).ready && io.enqRob.canAccept || io.rabCommits.isWalk
 
-  // dispatch1 ready ++ float point free list ready ++ int free list ready ++ not walk
-  val canOut = io.out(0).ready && fpFreeList.io.canAllocate && intFreeList.io.canAllocate && !io.robCommits.isWalk && vtyperename.io.canAccept
+  // dispatch1 ready ++ float point free list ready ++ int free list ready ++ not walk ++ rob canaccept
+  val canOut = io.out(0).ready && fpFreeList.io.canAllocate && intFreeList.io.canAllocate && !io.rabCommits.isWalk && !io.robCommits.isWalk && vtyperename.io.canAccept && io.enqRob.canAccept
 
-
+  // compressUnit: decode instructions guidelines to the ROB allocation logic
+  val compressUnit = Module(new CompressUnit())
+    compressUnit.io.in.zip(io.in).foreach{ case(sink, source) =>
+    sink.valid := source.valid
+    sink.bits := source.bits
+  }
+  val needRobFlags = compressUnit.io.out.needRobFlags
+  val instrSizesVec = compressUnit.io.out.instrSizes
+  val compressMasksVec = compressUnit.io.out.masks
+  dontTouch(needRobFlags);dontTouch(instrSizesVec);dontTouch(compressMasksVec)
   // speculatively assign the instruction with an robIdx
-  val validCount = PopCount(io.in.map(_.valid)) // number of instructions waiting to enter rob (from decode)
-  val robIdxHead = RegInit(0.U.asTypeOf(new RobPtr))
-  val lastCycleMisprediction = RegNext(io.redirect.valid && !io.redirect.bits.flushItself())
-  val robIdxHeadNext = Mux(io.redirect.valid, io.redirect.bits.robIdx, // redirect: move ptr to given rob index
-         Mux(lastCycleMisprediction, robIdxHead + 1.U, // mis-predict: not flush robIdx itself
-                         Mux(canOut & io.allowIn, robIdxHead + validCount, // instructions successfully entered next stage: increase robIdx
-                      /* default */  robIdxHead))) // no instructions passed by this cycle: stick to old value
-  robIdxHead := robIdxHeadNext
+ val validCount = PopCount(io.in.map(_.valid).zip(needRobFlags).map{
+  case(valid, needRob) => valid && needRob}) // number of instructions waiting to enter rob (from decode)
+ val robIdxHead = RegInit(0.U.asTypeOf(new RobPtr))
+ val lastCycleMisprediction = RegNext(io.redirect.valid && !io.redirect.bits.flushItself())
+ val robIdxHeadNext = Mux(io.redirect.valid, io.redirect.bits.robIdx, // redirect: move ptr to given rob index
+        Mux(lastCycleMisprediction, robIdxHead + 1.U, // mis-predict: not flush robIdx itself
+                        Mux(canOut & io.allowIn, robIdxHead + validCount, // instructions successfully entered next stage: increase robIdx
+                     /* default */  robIdxHead))) // no instructions passed by this cycle: stick to old value
+ robIdxHead := robIdxHeadNext
 
   /**
     * Rename: allocate free physical register and update rename table
@@ -140,12 +162,16 @@ class Rename(implicit p: Parameters) extends XSModule with HasPerfEvents with Ha
     uop.loadStoreEnable := DontCare
     uop.segIdx := 0.U
     uop.elmIdx := 0.U
+    uop.snapshot := DontCare
   })
 
   val needFpDest  = Wire(Vec(RenameWidth, Bool()))
   val needIntDest = Wire(Vec(RenameWidth, Bool()))
   val hasValid    = Cat(io.in.map(_.valid)).orR
-
+  val hasExceptionVec = Wire(Vec(RenameWidth, Bool()))
+  val needFlushPipeVec = Wire(Vec(RenameWidth, Bool()))
+  dontTouch(hasExceptionVec)
+  dontTouch(needFlushPipeVec)
   val isMove = io.in.map(_.bits.ctrl.isMove)
 
   val intSpecWen = Wire(Vec(RenameWidth, Bool()))
@@ -156,6 +182,19 @@ class Rename(implicit p: Parameters) extends XSModule with HasPerfEvents with Ha
     uops(i).cf := io.in(i).bits.cf
     uops(i).ctrl := io.in(i).bits.ctrl
     uops(i).fdiUntrusted := io.in(i).bits.cf.fdiUntrusted
+
+    // We use the lsrc/ldest before fusion decoder to read RAT for better timing.
+    io.intRat(i)(0).addr := uops(i).ctrl.lsrc(0)
+    io.intRat(i)(1).addr := uops(i).ctrl.lsrc(1)
+    io.intRat(i)(2).addr := uops(i).ctrl.ldest
+    io.intRat(i).foreach(_.hold := !io.out(i).ready)
+
+    // Floating-point instructions can not be fused now.
+    io.fpRat(i)(0).addr := uops(i).ctrl.lsrc(0)
+    io.fpRat(i)(1).addr := uops(i).ctrl.lsrc(1)
+    io.fpRat(i)(2).addr := uops(i).ctrl.lsrc(2)
+    io.fpRat(i)(3).addr := uops(i).ctrl.ldest
+    io.fpRat(i).foreach(_.hold := !io.out(i).ready)
 
     // update cf according to ssit result
     uops(i).cf.storeSetHit := io.ssit(i).valid
@@ -174,20 +213,30 @@ class Rename(implicit p: Parameters) extends XSModule with HasPerfEvents with Ha
     // no valid instruction from decode stage || all resources (dispatch1 + both free lists) ready
     io.in(i).ready := !hasValid || canOut
 
-    uops(i).robIdx  := robIdxHead + PopCount(io.in.take(i).map(_.valid))
+    uops(i).robIdx  := robIdxHead + PopCount(io.in.take(i).map(_.valid).zip(needRobFlags).map{
+      case(valid, needRob) => valid && needRob})
     uops(i).psrc(0) := Mux(uops(i).ctrl.srcType(0) === SrcType.reg, io.intReadPorts(i)(0), io.fpReadPorts(i)(0))
     uops(i).psrc(1) := Mux(uops(i).ctrl.srcType(1) === SrcType.reg, io.intReadPorts(i)(1), io.fpReadPorts(i)(1))
-    // int psrc2 should be bypassed from next instruction if it is fused
-    if (i < RenameWidth - 1) {
-      when (io.fusionInfo(i).rs2FromRs2 || io.fusionInfo(i).rs2FromRs1) {
-        uops(i).psrc(1) := Mux(io.fusionInfo(i).rs2FromRs2, io.intReadPorts(i + 1)(1), io.intReadPorts(i + 1)(0))
-      }.elsewhen(io.fusionInfo(i).rs2FromZero) {
-        uops(i).psrc(1) := 0.U
-      }
-    }
     uops(i).psrc(2)         := io.fpReadPorts(i)(2)
     uops(i).old_pdest       := Mux(uops(i).ctrl.rfWen, io.intReadPorts(i).last, io.fpReadPorts(i).last)
     uops(i).eliminatedMove  := isMove(i)
+  
+    uops(i).compressInstNum := instrSizesVec(i)
+    uops(i).compressMask    := compressMasksVec(i)
+    hasExceptionVec(i) := Cat(selectFrontend(uops(i).cf.exceptionVec) :+ uops(i).cf.exceptionVec(illegalInstr)).orR 
+    needFlushPipeVec(i) := hasExceptionVec(i) || uops(i).cf.trigger.getFrontendCanFire
+    uops(i).compressWbNum := instrSizesVec(i) - PopCount(compressMasksVec(i) & (Cat(isMove.reverse) | Cat(needFlushPipeVec.reverse)))
+
+    uops(i).lastUop := needRobFlags(i)
+    if(i == 0){uops(i).firstUop := true.B}else{uops(i).firstUop := needRobFlags(i - 1)}
+
+    when(io.out(i).valid){
+      assert(instrSizesVec(i)>=1.U, "uop num at least is 1")
+      when(instrSizesVec(i)===1.U){
+        assert(uops(i).lastUop && uops(i).firstUop,"when compress num is 1, must be first and last uop")
+      }.otherwise{
+        assert(!(uops(i).lastUop && uops(i).firstUop),"when compress num great than 1, first and last uop can't be same")}
+      }
     // update pdest
     uops(i).pdest := Mux(needIntDest(i), intFreeList.io.allocatePhyReg(i), // normal int inst
       // normal fp inst
@@ -203,8 +252,11 @@ class Rename(implicit p: Parameters) extends XSModule with HasPerfEvents with Ha
     vtyperename.io.vcsr <> io.vcsrio
 
     //out
-    io.out(i).valid := io.in(i).valid && intFreeList.io.canAllocate && fpFreeList.io.canAllocate && !io.robCommits.isWalk && vtyperename.io.canAccept && io.allowIn
+    io.out(i).valid := io.in(i).valid && intFreeList.io.canAllocate && fpFreeList.io.canAllocate && !io.robCommits.isWalk && vtyperename.io.canAccept && io.allowIn && io.enqRob.canAccept
     io.out(i).bits  := uops(i)
+    io.enqRob.needAlloc(i) := io.in(i).valid && uops(i).firstUop
+    io.enqRob.req(i).valid := io.in(i).valid && intFreeList.io.canAllocate && fpFreeList.io.canAllocate && !io.robCommits.isWalk && vtyperename.io.canAccept && io.allowIn && io.out(i).ready
+    io.enqRob.req(i).bits := io.out(i).bits
     // dirty code for fence. The lsrc is passed by imm.
     when (io.out(i).bits.ctrl.fuType === FuType.fence) {
       io.out(i).bits.ctrl.imm := Cat(io.in(i).bits.ctrl.lsrc(1), io.in(i).bits.ctrl.lsrc(0))
@@ -225,11 +277,9 @@ class Rename(implicit p: Parameters) extends XSModule with HasPerfEvents with Ha
 
     // write speculative rename table
     // we update rat later inside commit code
-    intSpecWen(i) := needIntDest(i) && intFreeList.io.canAllocate && intFreeList.io.doAllocate && !io.robCommits.isWalk && !io.redirect.valid && io.allowIn
-    fpSpecWen(i)  := needFpDest(i) && fpFreeList.io.canAllocate && fpFreeList.io.doAllocate && !io.robCommits.isWalk && !io.redirect.valid && io.allowIn
+    intSpecWen(i) := needIntDest(i) && intFreeList.io.canAllocate && intFreeList.io.doAllocate && !io.robCommits.isWalk && !io.redirect.valid && io.allowIn && io.enqRob.canAccept
+    fpSpecWen(i)  := needFpDest(i) && fpFreeList.io.canAllocate && fpFreeList.io.doAllocate && !io.robCommits.isWalk && !io.redirect.valid && io.allowIn && io.enqRob.canAccept
 
-    intRefCounter.io.allocate(i).valid  := intSpecWen(i)
-    intRefCounter.io.allocate(i).bits   := io.out(i).bits.pdest
   }
 
   /**
@@ -315,6 +365,15 @@ class Rename(implicit p: Parameters) extends XSModule with HasPerfEvents with Ha
     io.toVCtl(i).old_pdest := io.out(i).bits.old_pdest
     io.toVCtl(i).robIdx := io.out(i).bits.robIdx
   }
+  // snap generate
+  val genSnapshot = Cat(io.out.map(out => out.fire && out.bits.snapshot)).orR
+  val lastCycleCreateSnpt = RegInit(false.B)
+  lastCycleCreateSnpt := genSnapshot && !io.snptIsFull
+  val sameSnptDistance = (CommitWidth * 4).U
+  // notInSameSnpt: 1.robidxHead - snapLastEnq >= sameSnptDistance 2.no snap
+  val notInSameSnpt = RegNext(distanceBetween(robIdxHeadNext, io.snptLastEnq.bits) >= sameSnptDistance || !io.snptLastEnq.valid)
+  val allowSnpt = if (EnableRenameSnapshot) notInSameSnpt && !lastCycleCreateSnpt && io.out.head.bits.firstUop else false.B
+  io.out.zip(io.in).foreach{ case (out, in) => out.bits.snapshot := allowSnpt && (!in.bits.cf.pd.notCFI || FuType.isJumpExu(in.bits.ctrl.fuType)) && in.fire }
 
   val setVlBypass0 = io.out(0).bits.ctrl.fuType === FuType.csr &&
                     (io.out(0).bits.ctrl.fuOpType === CSROpType.vsetvl || io.out(0).bits.ctrl.fuOpType === CSROpType.vsetvli) &&
@@ -323,14 +382,12 @@ class Rename(implicit p: Parameters) extends XSModule with HasPerfEvents with Ha
     io.out(0).bits.psrc(0) := vtyperename.io.out(0).bits.psrc(0)
   }
 
-
-
   /**
     * Instructions commit: update freelist and rename table
     */
   for (i <- 0 until CommitWidth) {
-    val commitValid = io.robCommits.isCommit && io.robCommits.commitValid(i)
-    val walkValid = io.robCommits.isWalk && io.robCommits.walkValid(i)
+    val commitValid = io.rabCommits.isCommit && io.rabCommits.commitValid(i)
+    val walkValid = io.rabCommits.isWalk && io.rabCommits.walkValid(i)
 
     Seq((io.intRenamePorts, false), (io.fpRenamePorts, true)) foreach { case (rat, fp) =>
       /*
@@ -353,17 +410,19 @@ class Rename(implicit p: Parameters) extends XSModule with HasPerfEvents with Ha
       II. Free List Update
        */
       if (fp) { // Float Point free list
-        fpFreeList.io.freeReq(i)  := commitValid && needDestRegCommit(fp, io.robCommits.info(i))
-        fpFreeList.io.freePhyReg(i) := io.robCommits.info(i).old_pdest
+        fpFreeList.io.freeReq(i)  := RegNext(commitValid && io.rabCommits.info(i).fpWen)
+        fpFreeList.io.freePhyReg(i) := io.fp_old_pdest(i)
       } else { // Integer free list
-        intFreeList.io.freeReq(i) := intRefCounter.io.freeRegs(i).valid
-        intFreeList.io.freePhyReg(i) := intRefCounter.io.freeRegs(i).bits
+        intFreeList.io.freeReq(i) := io.int_need_free(i)
+        intFreeList.io.freePhyReg(i) := RegNext(io.int_old_pdest(i))
       }
     }
 
-    intRefCounter.io.deallocate(i).valid := (commitValid || walkValid) && needDestRegCommit(false, io.robCommits.info(i))
-    intRefCounter.io.deallocate(i).bits := Mux(io.robCommits.isWalk, io.robCommits.info(i).pdest, io.robCommits.info(i).old_pdest)
   }
+  intFreeList.io.snpt := io.snpt
+  fpFreeList.io.snpt := io.snpt
+  intFreeList.io.snpt.snptEnq := genSnapshot
+  fpFreeList.io.snpt.snptEnq := genSnapshot
 
   /*
   Debug and performance counters
@@ -396,12 +455,13 @@ class Rename(implicit p: Parameters) extends XSModule with HasPerfEvents with Ha
   XSPerfAccumulate("in", Mux(RegNext(io.in(0).ready), PopCount(io.in.map(_.valid)), 0.U))
   XSPerfAccumulate("utilization", PopCount(io.in.map(_.valid)))
   XSPerfAccumulate("waitInstr", PopCount((0 until RenameWidth).map(i => io.in(i).valid && !io.in(i).ready)))
-  XSPerfAccumulate("stall_cycle_dispatch", hasValid && !io.out(0).ready && fpFreeList.io.canAllocate && intFreeList.io.canAllocate && !io.robCommits.isWalk)
-  XSPerfAccumulate("stall_cycle_fp", hasValid && io.out(0).ready && !fpFreeList.io.canAllocate && intFreeList.io.canAllocate && !io.robCommits.isWalk)
-  XSPerfAccumulate("stall_cycle_int", hasValid && io.out(0).ready && fpFreeList.io.canAllocate && !intFreeList.io.canAllocate && !io.robCommits.isWalk)
-  XSPerfAccumulate("stall_cycle_walk", hasValid && io.out(0).ready && fpFreeList.io.canAllocate && intFreeList.io.canAllocate && io.robCommits.isWalk)
-  XSPerfAccumulate("recovery_bubbles", PopCount(io.in.map(_.valid && io.out(0).ready && fpFreeList.io.canAllocate && intFreeList.io.canAllocate && io.robCommits.isWalk)))
-
+  XSPerfAccumulate("stall_cycle_dispatch", hasValid && !io.out(0).ready && fpFreeList.io.canAllocate && intFreeList.io.canAllocate && !io.robCommits.isWalk && io.enqRob.canAccept)
+  XSPerfAccumulate("stall_cycle_fp", hasValid && io.out(0).ready && !fpFreeList.io.canAllocate && intFreeList.io.canAllocate && !io.robCommits.isWalk && io.enqRob.canAccept)
+  XSPerfAccumulate("stall_cycle_int", hasValid && io.out(0).ready && fpFreeList.io.canAllocate && !intFreeList.io.canAllocate && !io.robCommits.isWalk && io.enqRob.canAccept)
+  XSPerfAccumulate("stall_cycle_robfull", hasValid && io.out(0).ready && fpFreeList.io.canAllocate && intFreeList.io.canAllocate && !io.robCommits.isWalk && !io.enqRob.canAccept)
+  XSPerfAccumulate("stall_cycle_walk", hasValid && io.out(0).ready && fpFreeList.io.canAllocate && intFreeList.io.canAllocate && io.robCommits.isWalk && io.enqRob.canAccept)
+  XSPerfAccumulate("recovery_bubbles", PopCount(io.in.map(_.valid && io.out(0).ready && fpFreeList.io.canAllocate && intFreeList.io.canAllocate && io.robCommits.isWalk && io.enqRob.canAccept)))
+  XSPerfAccumulate("compress_instr", PopCount(io.out.map(o => o.fire && o.bits.compressInstNum > 1.U)))
   XSPerfAccumulate("move_instr_count", PopCount(io.out.map(out => out.fire && out.bits.ctrl.isMove)))
   val is_fused_lui_load = io.out.map(o => o.fire && o.bits.ctrl.fuType === FuType.ldu && o.bits.ctrl.srcType(0) === SrcType.imm)
   XSPerfAccumulate("fused_lui_load_instr_count", PopCount(is_fused_lui_load))

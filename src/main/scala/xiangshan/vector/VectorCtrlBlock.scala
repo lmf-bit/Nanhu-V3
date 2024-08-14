@@ -46,7 +46,7 @@ class VectorCtrlBlock(vecDpWidth: Int, vpDpWidth: Int, memDpWidth: Int)(implicit
   val io = IO(new Bundle {
     //val hartId = Input(UInt(8.W))
     //from ctrl decode
-    val in = Vec(DecodeWidth, Flipped(DecoupledIO(new CfCtrl)))
+    val in = Vec(DecodeWidth, Flipped(DecoupledIO(new MicroOp)))
     val allowIn = Input(Bool())
     //from ctrl rename
     val fromVtpRn = Input(Vec(RenameWidth, new VtpToVCtl))
@@ -55,6 +55,7 @@ class VectorCtrlBlock(vecDpWidth: Int, vpDpWidth: Int, memDpWidth: Int)(implicit
     val vtypewriteback = Flipped(ValidIO(new VtypeWbIO)) //to wait queue
     val vmbAlloc = Flipped(new VmbAlloc)
     val commit = Flipped(new RobCommitIO) // to rename
+    val rabCommit = Input(new RabCommitIO) // to rename
     val redirect = Flipped(ValidIO(new Redirect))
     //from csr vstart
     val vstart = Input(UInt(7.W))
@@ -115,6 +116,7 @@ class VectorCtrlBlock(vecDpWidth: Int, vpDpWidth: Int, memDpWidth: Int)(implicit
     vrI <> wqO
   }
   virename.io.commit      <> io.commit
+  virename.io.rabCommit   <> io.rabCommit
   virename.io.exception := io.exception
 
   for((rp, dp) <- virename.io.rename.map(_.out) zip dispatch.io.req.uop) {

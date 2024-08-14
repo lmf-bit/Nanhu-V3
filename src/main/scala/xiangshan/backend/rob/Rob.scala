@@ -30,6 +30,8 @@ import xiangshan.backend.writeback._
 import xiangshan.vector._
 import xs.utils.perf.HasPerfLogging
 import xiangshan.VstartType
+import xiangshan.backend.execute.fu.csr.CSROpType
+import xiangshan.backend.rename.SnapshotGenerator
 
 class Rob(implicit p: Parameters) extends LazyModule with HasXSParameter {
   val wbNodeParam = WriteBackSinkParam(name = "ROB", sinkType = WriteBackSinkType.rob)
@@ -66,8 +68,11 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
     val exception = ValidIO(new ExceptionInfo)
     val mmuEnable = Input(Bool())
     val commits = new RobCommitIO
+    val rabCommits = Output(new RabCommitIO)
+    val diffCommits = if (env.EnableDifftest || env.AlwaysBasicDiff) Some(Output(new DiffCommitIO)) else None
     val lsq = new RobLsqIO
     val csr = new RobCSRIO
+    val snpt = Input(new SnapshotPort)
     val robFull = Output(Bool())
     val cpu_halt = Output(Bool())
     val wfi_enable = Input(Bool())
@@ -141,7 +146,8 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
 
   val entryDataRead = entryDataModule.io.rdata.take(CommitWidth)
   val csrDataRead = csrDataModule.io.rdata
-
+  //************************rename buffer************************
+  val rab = Module(new RenameBuffer(RabSize))
   //************************data for debug************************
   // Warn: debug_* prefix should not exist in generated verilog.
   val debug_microOp = Reg(Vec(RobSize, new MicroOp))
@@ -231,12 +237,12 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
 
   //************************ptr move************************
   val allocatePtrVec = VecInit((0 until RenameWidth).map(
-    i => enqPtrVec(PopCount(io.enq.needAlloc.take(i)))
+    i => enqPtrVec(PopCount(io.enq.req.take(i).map(req => req.valid && req.bits.firstUop)))
   ))
-  io.enq.canAccept := allowEnqueue && !hasBlockBackward
+  io.enq.canAccept := allowEnqueue && !hasBlockBackward && rab.io.canEnq
   io.enq.canAccept_dup.zip(allowEnqueuedupRegs).zip(hasBlockBackwarddupRegs).foreach({case ((c,a),b) => c:= a && !b})
   io.enq.resp := allocatePtrVec
-  val canEnqueue = VecInit(io.enq.req.map(_.valid && io.enq.canAccept))
+  val canEnqueue = VecInit(io.enq.req.map( enq => enq.valid && io.enq.canAccept && enq.bits.firstUop))
   val timer = GTimer()
   for (i <- 0 until RenameWidth) {
     // we don't check whether io.redirect is valid here since redirect has higher priority
@@ -267,8 +273,17 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
       }
     }
   }
-  val enqNum = Mux(io.enq.canAccept, PopCount(io.enq.req.map(_.valid)), 0.U)
+  val enqNum = Mux(io.enq.canAccept, PopCount(io.enq.req.map(req => req.valid && req.bits.firstUop)), 0.U)
   io.enq.isEmpty := RegNext(isEmpty && !VecInit(io.enq.req.map(_.valid)).asUInt.orR)
+
+  //snap enq
+  val snptEnq = io.enq.canAccept && io.enq.req.map(x => x.valid && x.bits.snapshot).reduce(_ || _)
+  val snapshotPtrVec = Wire(Vec(CommitWidth, new RobPtr))
+  snapshotPtrVec(0) := io.enq.req(0).bits.robIdx
+  for (i <- 1 until CommitWidth) {
+    snapshotPtrVec(i) := snapshotPtrVec(0) + i.U
+  }
+  val snapshots = SnapshotGenerator(snapshotPtrVec, snptEnq, io.snpt.snptDeq, io.redirect.valid, io.snpt.flushVec)
 
   /**
    * ************************Writeback (from wbNet and MergeBuffer)************************
@@ -296,6 +311,10 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
       debug_microOp(wbIdx).debugInfo.selectTime := wb.bits.uop.debugInfo.selectTime
       debug_microOp(wbIdx).debugInfo.issueTime := wb.bits.uop.debugInfo.issueTime
       debug_microOp(wbIdx).debugInfo.writebackTime := wb.bits.uop.debugInfo.writebackTime
+//      debug_microOp(wbIdx).cf.predebugInfo.fetchTime := wb.bits.uop.cf.predebugInfo.fetchTime
+//      debug_microOp(wbIdx).cf.predebugInfo.decodeTime := wb.bits.uop.cf.predebugInfo.decodeTime
+      debug_microOp(wbIdx).debugInfo.renameTime := wb.bits.uop.debugInfo.renameTime
+      debug_microOp(wbIdx).debugInfo.dispatchTime := wb.bits.uop.debugInfo.dispatchTime
       debug_microOp(wbIdx).sqIdx := wb.bits.uop.sqIdx
       debug_microOp(wbIdx).lqIdx := wb.bits.uop.lqIdx
 
@@ -324,6 +343,10 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
       val wbIdx = wb.bits.uop.robIdx.value
       debug_exuData(wbIdx) := wb.bits.data
       debug_exuDebug(wbIdx) := wb.bits.debug
+//      debug_microOp(wbIdx).cf.predebugInfo.fetchTime := wb.bits.uop.cf.predebugInfo.fetchTime
+//      debug_microOp(wbIdx).cf.predebugInfo.decodeTime := wb.bits.uop.cf.predebugInfo.decodeTime
+      debug_microOp(wbIdx).debugInfo.renameTime := wb.bits.uop.debugInfo.renameTime
+      debug_microOp(wbIdx).debugInfo.dispatchTime := wb.bits.uop.debugInfo.dispatchTime
       debug_microOp(wbIdx).debugInfo.enqRsTime := wb.bits.uop.debugInfo.enqRsTime
       debug_microOp(wbIdx).debugInfo.selectTime := wb.bits.uop.debugInfo.selectTime
       debug_microOp(wbIdx).debugInfo.issueTime := wb.bits.uop.debugInfo.issueTime
@@ -430,15 +453,31 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
   }).reduce(_ | _)
   val dirty_vs = (io.commits.isCommit && VecInit(vecWen).asUInt.orR) || io.csr.vstart.valid || io.csr.vxsat.valid
   val dirty_fs = io.commits.isCommit && VecInit(fpWen).asUInt.orR
-  val blockCommit = hasWFI || exceptionWaitingRedirect
+  val trapBlockCommit = hasWFI || exceptionWaitingRedirect || io.redirect.valid
+
+  val deqPtrGenModule = Module(new RobCommitHelper)
+  val deqPtrVec_next = deqPtrGenModule.io.deqPtrNextVec
+
+  val lastWalkPtr = Wire(new RobPtr)
+  val walkPtrTrue = Reg(new RobPtr)
+  dontTouch(lastWalkPtr)
+  dontTouch(walkPtrTrue)
+  when(io.redirect.valid) {
+    lastWalkPtr := Mux(io.redirect.bits.flushItself(), io.redirect.bits.robIdx - 1.U, io.redirect.bits.robIdx)
+  }.elsewhen(state === s_walk) {
+    lastWalkPtr := Mux(io.redirect.bits.flushItself(), io.redirect.bits.robIdx - 1.U, io.redirect.bits.robIdx)
+  }.otherwise {
+    lastWalkPtr := 0.U.asTypeOf(new RobPtr)
+  }
 
   // Commit
   io.commits.isWalk := (state =/= s_idle)
-  io.commits.isCommit := (state === s_idle) && (!blockCommit)
+  io.commits.isCommit := (state === s_idle) && (!trapBlockCommit)
+  val walkPtrHead = Wire(new RobPtr)
   val canWalkVec = Wire(Vec(CommitWidth, Bool()))
-  val walkCounter = Reg(UInt(log2Up(RobSize + 1).W))
+  val walkCounter = RegInit(0.U(log2Up(RobSize + 1).W))
   val canWalkNum = PopCount(canWalkVec)
-  val walkFinished = walkCounter === canWalkNum
+  val walkFinished = walkPtrHead > lastWalkPtr
   val walk_v = VecInit(walkPtrVec.map(ptr => valid(ptr.value)))
   val commit_v = VecInit(deqPtrVec.map(ptr => valid(ptr.value)))
   val commit_w = VecInit(deqPtrVec.map(ptr => writebacked(ptr.value) && store_data_writebacked(ptr.value)))
@@ -448,13 +487,12 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
   // for instructions that may block others, we don't allow them to commit
   val deqPtrForMask = Mux(state === s_idle, deqPtrVec, walkPtrVec)
   val commits_vec = deqPtrForMask.map(ptr => vectorMarkVec(ptr.value))
-  for (((v, canWalk), i) <- canWalkVec.zip(walk_v).zipWithIndex) {
-    //val vecNum = PopCount(commits_vec.take(i + 1))
-    v := canWalk && (i.U < walkCounter)
-  }
+  val commits_needDest = entryDataRead.map(_.needDest)
 
-  val deqPtrGenModule = Module(new RobCommitHelper)
-  val deqPtrVec_next = deqPtrGenModule.io.deqPtrNextVec
+  for ((((v, canWalk), walkptr), i) <- canWalkVec.zip(walk_v).zip(walkPtrVec).zipWithIndex) {
+    //val vecNum = PopCount(commits_vec.take(i + 1))
+    v := canWalk && (i.U < walkCounter) && walkptr <= lastWalkPtr
+  }
   deqPtrGenModule.io.state := state
   deqPtrGenModule.io.deq_valid := commit_v
   deqPtrGenModule.io.deq_writed := commit_w
@@ -462,10 +500,11 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
   deqPtrGenModule.io.intrBitSetReg := intrBitSetReg
   deqPtrGenModule.io.hasNoSpecExec := hasNoSpecExec
   deqPtrGenModule.io.interrupt_safe := interrupt_safe(deqPtr.value)
-  deqPtrGenModule.io.blockCommit := blockCommit
+  deqPtrGenModule.io.blockCommit := trapBlockCommit
   deqPtrGenModule.io.deq_isVec := commits_vec
+  deqPtrGenModule.io.deq_needDest := commits_needDest
   deqPtrVec := deqPtrGenModule.io.deqPtrVec
-
+  
   for (i <- 0 until CommitWidth) {
     // when intrBitSetReg, allow only one instruction to commit at each clock cycle
     val isBlocked = if (i != 0) {
@@ -473,12 +512,20 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
     } else {
       intrEnable || deqHasException
     }
-    io.commits.commitValid(i) := deqPtrGenModule.io.commitValid(i) && !isBlocked
-    io.commits.walkValid(i) := canWalkVec(i)
+    io.commits.commitValid(i) := deqPtrGenModule.io.commitValid(i) && !isBlocked && (state === s_idle) && !trapBlockCommit
+    io.commits.walkValid(i) := canWalkVec(i) && (state =/= s_idle)
     io.commits.info(i).pc := debug_microOp(deqPtrVec(i).value).cf.pc
     io.commits.info(i).connectEntryData(entryDataRead(i))
     io.commits.info(i).vecWen := commits_vec(i)
     io.commits.robIdx(i) := Mux(state === s_idle, deqPtrVec(i), walkPtrVec(i))
+
+    when(io.commits.commitValid(i)){
+      assert(io.commits.commitValid.take(i+1).reduce(_ && _), "commit valid must True from idx = 0 to %d", i.U)
+    }
+    // io.rblCommits.commitSize := deqPtrGenModule.io.rabCommitSize
+    // io.rblCommits.walkSize := deqPtrGenModule.io.rabCommitSize
+    // io.rblCommits.walkValid := (state =/= s_idle)
+    // io.rblCommits.commitValid := (state === s_idle) && (!blockCommit)
 
     // when (io.commits.isWalk && state === s_walk && shouldWalkVec(i)) {
     //   XSError(!walk_v(i), s"why not $i???\n")
@@ -502,10 +549,14 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
       debug_exuData(deqPtrVec(i).value),
       csrDataRead(i).fflags
     )
-    XSInfo(state === s_walk && io.commits.walkValid(i), "walked pc %x wen %d ldst %d data %x\n",
+    XSInfo(state === s_walk && io.commits.walkValid(i), "walked pc %x wen %d ldst %d isWalk %d ldest %x pdest %x rfwen %d data %x\n",
       debug_microOp(walkPtrVec(i).value).cf.pc,
       io.commits.info(i).rfWen,
       io.commits.info(i).ldest,
+      rab.io.commits.isWalk,
+      rab.io.commits.info(i).ldest,
+      rab.io.commits.info(i).pdest,
+      rab.io.commits.info(i).rfWen,
       debug_exuData(walkPtrVec(i).value)
     )
     XSInfo(state === s_extrawalk && io.commits.walkValid(i), "use extra space walked wen %d ldst %d\n",
@@ -601,34 +652,27 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
   // state === s_idle: don't change when walk_no_need
   // state === s_walk: don't change when walk_no_need && walkFinished
   // state === s_extrawalk: always continue to walk (because it's not possible for walk_no_need)
-  val zeroWalkDistance = ((enqPtr - 1.U) === io.redirect.bits.robIdx) && (!io.redirect.bits.flushItself())
-  val noNeedToWalk = zeroWalkDistance && ((state === s_idle) || (state === s_walk && walkFinished))
+  val zeroWalkDistance = (deqPtr === io.redirect.bits.robIdx) && (!io.redirect.bits.flushItself())
+  // val noNeedToWalk = zeroWalkDistance && ((state === s_idle) || (state === s_walk && walkFinished))
+  val noNeedToWalk = false.B
   // update the state depending on whether there is a redirect
-  val state_next = Mux(io.redirect.valid,
-    Mux(io.enq.needAlloc.asUInt.orR,
-      s_extrawalk,
-      Mux(noNeedToWalk, s_idle, s_walk)
-    ),
-    Mux(state === s_walk && walkFinished,
-      s_idle,
-      Mux(state === s_extrawalk,
-        // if no more walk, switch to s_idle
-        Mux(walkCounter === 0.U, s_idle, s_walk),
-        state
-      )
+  val stateNext = Mux(io.redirect.valid || RegNext(io.redirect.valid),
+      Mux(noNeedToWalk, s_idle, s_walk),
+    Mux(state === s_walk && walkFinished && rab.io.status.walkEnd,
+      s_idle, state
     )
   )
-  state := state_next
+  state := stateNext
 
-  XSPerfAccumulate("s_idle_to_idle", state === s_idle && state_next === s_idle)
-  XSPerfAccumulate("s_idle_to_walk", state === s_idle && state_next === s_walk)
-  XSPerfAccumulate("s_idle_to_extrawalk", state === s_idle && state_next === s_extrawalk)
-  XSPerfAccumulate("s_walk_to_idle", state === s_walk && state_next === s_idle)
-  XSPerfAccumulate("s_walk_to_walk", state === s_walk && state_next === s_walk)
-  XSPerfAccumulate("s_walk_to_extrawalk", state === s_walk && state_next === s_extrawalk)
-  XSPerfAccumulate("s_extrawalk_to_idle", state === s_extrawalk && state_next === s_idle)
-  XSPerfAccumulate("s_extrawalk_to_walk", state === s_extrawalk && state_next === s_walk)
-  XSPerfAccumulate("s_extrawalk_to_extrawalk", state === s_extrawalk && state_next === s_extrawalk)
+  XSPerfAccumulate("s_idle_to_idle", state === s_idle && stateNext === s_idle)
+  XSPerfAccumulate("s_idle_to_walk", state === s_idle && stateNext === s_walk)
+  XSPerfAccumulate("s_idle_to_extrawalk", state === s_idle && stateNext === s_extrawalk)
+  XSPerfAccumulate("s_walk_to_idle", state === s_walk && stateNext === s_idle)
+  XSPerfAccumulate("s_walk_to_walk", state === s_walk && stateNext === s_walk)
+  XSPerfAccumulate("s_walk_to_extrawalk", state === s_walk && stateNext === s_extrawalk)
+  XSPerfAccumulate("s_extrawalk_to_idle", state === s_extrawalk && stateNext === s_idle)
+  XSPerfAccumulate("s_extrawalk_to_walk", state === s_extrawalk && stateNext === s_walk)
+  XSPerfAccumulate("s_extrawalk_to_extrawalk", state === s_extrawalk && stateNext === s_extrawalk)
   XSPerfAccumulate("redirect_bypass_to_idle", io.redirect.valid && !io.enq.needAlloc.asUInt.orR && noNeedToWalk)
   XSPerfAccumulate("extra_walk_bypass_to_idle", !io.redirect.valid && state === s_extrawalk && walkCounter === 0.U)
 
@@ -637,23 +681,31 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
    */
   val enqPtrGenModule = Module(new RobEnqPtrWrapper)
   enqPtrGenModule.io.redirect := io.redirect
-  enqPtrGenModule.io.allowEnqueue := allowEnqueue
+  enqPtrGenModule.io.allowEnqueue := allowEnqueue && rab.io.canEnq
   enqPtrGenModule.io.hasBlockBackward := hasBlockBackward
-  enqPtrGenModule.io.enq := VecInit(io.enq.req.map(_.valid))
+  enqPtrGenModule.io.enq := VecInit(io.enq.req.map(req => req.valid && req.bits.firstUop))
   enqPtrVec := enqPtrGenModule.io.out
 
   val thisCycleWalkCount = canWalkNum
   // next walkPtrVec:
   // (1) redirect occurs: update according to state
   // (2) walk: move backwards
-  val walkPtrVec_next = Mux(io.redirect.valid && state =/= s_extrawalk,
-    Mux(state === s_walk,
-      VecInit(walkPtrVec.map(_ - thisCycleWalkCount)),
-      VecInit((0 until CommitWidth).map(i => enqPtr - (i + 1).U))
-    ),
-    Mux(state === s_walk, VecInit(walkPtrVec.map(_ - canWalkNum)), walkPtrVec)
+  // val walkPtrVec_next = Mux(io.redirect.valid && state =/= s_extrawalk,
+  //   Mux(state === s_walk,
+  //     VecInit(walkPtrVec.map(_ + thisCycleWalkCount)),
+  //     VecInit((0 until CommitWidth).map(i => deqPtrVec_next.head + (i).U))
+  //   ),
+  //   Mux(state === s_walk, VecInit(walkPtrVec.map(_ + CommitWidth.U)), walkPtrVec)
+  // )
+  val deqPtrVecForWalk = VecInit((0 until CommitWidth).map(i => deqPtrVec_next.head + i.U))
+  val snapPtrRead = snapshots(io.snpt.snptSelect)(0)
+  val snapPtrVecForWalk = VecInit((0 until CommitWidth).map(i => snapPtrRead + i.U))
+  val walkPtrVec_next = Mux(io.redirect.valid,
+    Mux(io.snpt.useSnpt, snapPtrVecForWalk, deqPtrVecForWalk),
+    Mux((state === s_walk) && !walkFinished, VecInit(walkPtrVec.map(_ + CommitWidth.U)), walkPtrVec)
   )
   walkPtrVec := walkPtrVec_next
+  walkPtrHead := walkPtrVec.head
 
   val numValidEntries = distanceBetween(enqPtr, deqPtr)
   val commitCnt = PopCount(io.commits.commitValid)
@@ -661,23 +713,18 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
   allowEnqueue := (numValidEntries + enqNum) <= (RobSize - RenameWidth).U
   allowEnqueuedupRegs.foreach(_ := (numValidEntries + enqNum) <= (RobSize - RenameWidth).U)
 
-  val currentWalkPtr = Mux(state === s_walk || state === s_extrawalk, walkPtr, enqPtr - 1.U)
-  val redirectWalkDistance = distanceBetween(currentWalkPtr, io.redirect.bits.robIdx)
+  val currentWalkPtr = Mux(io.redirect.valid, deqPtrVec_next.head, Mux(state === s_walk, walkPtr, deqPtrVec_next.head))
+  val redirectWalkDistance = distanceBetween(io.redirect.bits.robIdx, currentWalkPtr)
+  // now when T cycle redirect coming and state is s_walk, the thisCycleWalkCount set to 0
+  // the nested redirect will walk again from deq now
+  val redirectDelay1FlushItself = RegInit(false.B)
+  val redirectDelay1FlushItselfNext = Mux(io.redirect.valid, io.redirect.bits.flushItself(), false.B)
+  val successRedirect = io.redirect.valid && RegNext(io.redirect.valid)
+  redirectDelay1FlushItself := redirectDelay1FlushItselfNext
   when(io.redirect.valid) {
-    walkCounter := Mux(state === s_walk,
-      // NOTE: +& is used here because:
-      // When rob is full and the head instruction causes an exception,
-      // the redirect robIdx is the deqPtr. In this case, currentWalkPtr is
-      // enqPtr - 1.U and redirectWalkDistance is RobSize - 1.
-      // Since exceptions flush the instruction itself, flushItSelf is true.B.
-      // Previously we use `+` to count the walk distance and it causes overflows
-      // when RobSize is power of 2. We change it to `+&` to allow walkCounter to be RobSize.
-      // The width of walkCounter also needs to be changed.
-      redirectWalkDistance - (thisCycleWalkCount - io.redirect.bits.flushItself()),
-      redirectWalkDistance + io.redirect.bits.flushItself()
-    )
-    XSError(state === s_walk && thisCycleWalkCount < io.redirect.bits.flushItself(),
-      p"walk distance error ($thisCycleWalkCount < ${io.redirect.bits.flushItself()}\n")
+    walkCounter := redirectWalkDistance + !io.redirect.bits.flushItself()
+    XSError(state === s_walk && !successRedirect && thisCycleWalkCount < redirectDelay1FlushItself,
+      p"walk distance error ($thisCycleWalkCount < ${redirectDelay1FlushItself}\n")
   }.elsewhen(state === s_walk) {
     walkCounter := walkCounter - thisCycleWalkCount
     XSInfo(p"rolling back: $enqPtr $deqPtr walk $walkPtr walkcnt $walkCounter\n")
@@ -702,21 +749,40 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
    * ----------------------------------------
    */
   val commitReadAddr = Mux(state === s_idle, VecInit(deqPtrVec.map(_.value)), VecInit(walkPtrVec.map(_.value)))
-
+  val commitReadAddrNext = Mux(state === s_idle, VecInit(deqPtrVec.map(_ + CommitWidth.U).map(_.value)), VecInit(walkPtrVec.map(_ + CommitWidth.U).map(_.value)))
   // enqueue logic writes 6 valid
   for (i <- 0 until RenameWidth) {
     when(canEnqueue(i) && !io.redirect.valid) {
       valid(allocatePtrVec(i).value) := true.B
     }
   }
+  val redirectValidReg = RegNext(io.redirect.valid)
+  val redirectBegin = Reg(UInt(log2Up(RobSize).W))
+  val redirectEnd = Reg(UInt(log2Up(RobSize).W))
+  val specialRedirectPoint = Reg(Bool())
+  when(io.redirect.valid){
+    specialRedirectPoint := enqPtr.value === deqPtr.value && io.redirect.bits.robIdx.value === deqPtr.value && io.redirect.bits.flushItself()
+    redirectBegin := Mux(io.redirect.bits.flushItself(), io.redirect.bits.robIdx.value - 1.U, io.redirect.bits.robIdx.value)
+    redirectEnd := enqPtr.value
+  }
+  for (i <- 0 until RobSize) {
+   val needFlush = redirectValidReg && Mux(
+    (redirectEnd > redirectBegin) && !specialRedirectPoint,
+    (i.U > redirectBegin) && (i.U < redirectEnd),
+    (i.U > redirectBegin) || (i.U < redirectEnd)
+   )
+   when(needFlush){
+    valid(i) := false.B
+   }
   // dequeue/walk logic writes 6 valid, dequeue and walk will not happen at the same time
-  for (i <- 0 until CommitWidth) {
-    val commitValid = io.commits.isCommit && io.commits.commitValid(i)
-    val walkValid = io.commits.isWalk && io.commits.walkValid(i) && state =/= s_extrawalk
-    when(commitValid || walkValid) {
-      valid(commitReadAddr(i)) := false.B
+  for (j <- 0 until CommitWidth) {
+    val commitValid = io.commits.isCommit && io.commits.commitValid(j)
+    val walkValid = io.commits.isWalk && io.commits.walkValid(j) && state =/= s_extrawalk
+    when(commitValid &&(commitReadAddr(j) === i.U)) {
+      valid(i) := false.B
     }
   }
+}
 
   // status field: writebacked
   // enqueue logic set 6 writebacked to false
@@ -724,7 +790,8 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
     val enqHasException = ExceptionNO.selectFrontend(io.enq.req(i).bits.cf.exceptionVec).asUInt.orR
     val enqHasTriggerCanFire = io.enq.req(i).bits.cf.trigger.getFrontendCanFire
     val enqIsWritebacked = io.enq.req(i).bits.eliminatedMove
-    wbStatusArray.enqueue(canEnqueue(i), allocatePtrVec(i), enqIsWritebacked && !enqHasException && !enqHasTriggerCanFire)
+    val compressWbNum = io.enq.req(i).bits.compressWbNum
+    wbStatusArray.enqueue(canEnqueue(i), allocatePtrVec(i), enqHasException || enqHasTriggerCanFire, compressWbNum)
     when(canEnqueue(i)) {
       val isScalarStu = io.enq.req(i).bits.ctrl.fuType === FuType.stu && !io.enq.req(i).bits.ctrl.isVector
       store_data_writebacked(allocatePtrVec(i).value) := !isScalarStu
@@ -764,7 +831,7 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
       // However, we cannot determine whether a load/store instruction is MMIO.
       // Thus, we don't allow load/store instructions to trigger an interrupt.
       // TODO: support non-MMIO load-store instructions to trigger interrupts
-      val allow_interrupts = !CommitType.isLoadStore(io.enq.req(i).bits.ctrl.commitType)
+      val allow_interrupts = !CommitType.isLoadStore(io.enq.req(i).bits.ctrl.commitType) && !(io.enq.req(i).bits.ctrl.fuOpType === CSROpType.jmp)
       interrupt_safe(RegNext(allocatePtrVec(i).value)) := RegNext(allow_interrupts)
     }
   }
@@ -776,7 +843,7 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
       if(commit)           -->  rob.entry.read(deqPtrVec_next)
       else, state is walk, -->  rob.entry.read(walkPtrVec_next)
   */
-  private val commitReadAddr_next = Mux(state_next === s_idle,
+  private val commitReadAddr_next = Mux(stateNext === s_idle,
     VecInit(deqPtrVec_next.map(_.value)),
     VecInit(walkPtrVec_next.map(_.value))
   )
@@ -787,6 +854,7 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
 
   entryDataModule.io.wen := canEnqueue
   entryDataModule.io.waddr := allocatePtrVec.map(_.value)
+  val enqNeedWriteRFSeq = io.enq.req.map(_.bits.ctrl.needWriteRf)
   entryDataModule.io.wdata.zip(io.enq.req.map(_.bits)).zip(canEnqueue).zip(allocatePtrVec).foreach {
     case (((wdata, req), wen), ptr) =>
       wdata.ldest := req.ctrl.ldest
@@ -803,7 +871,32 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
       wdata.vtypeWb := req.ctrl.isVtype
       wdata.isVector := req.ctrl.isVector && !req.ctrl.isVtype
       wdata.isOrder := req.vctrl.ordered
+      wdata.needDest := (req.ctrl.rfWen && req.ctrl.ldest =/= 0.U) || req.ctrl.fpWen || req.ctrl.vdWen
+      wdata.realDestNum := PopCount(VecInit(enqNeedWriteRFSeq).asUInt & req.compressMask)
+      wdata.instrSize.foreach(_ := req.compressInstNum)
   }
+  /*
+   * connect with rab
+  */
+  rab.io.req.zip(io.enq.req).map { case (dest, src) =>
+    dest.bits := src.bits
+    dest.valid := src.valid && io.enq.canAccept
+  }
+  rab.io.snpt := io.snpt
+  rab.io.snpt.snptEnq := snptEnq
+  rab.io.redirect.valid := io.redirect.valid
+  // rab.io.snpt.snptEnq := false.B
+  rab.io.fromRob.walkEnd := state === s_walk && walkFinished
+  val commitSizeSumSeq = VecInit((0 until CommitWidth).map(i => io.commits.info.take(i+1).map(info => info.realDestNum).reduce(_ +& _)))
+  val commitSizeSum = PriorityMuxDefault((io.commits.commitValid.zip(commitSizeSumSeq)).reverse, 0.U)
+  rab.io.fromRob.commitSize := commitSizeSum
+  val walkSizeSumSeq = VecInit((0 until CommitWidth).map(i => io.commits.info.take(i+1).map(info => info.realDestNum).reduce(_ +& _)))
+  val walkSizeSum = PriorityMuxDefault((io.commits.walkValid.zip(commitSizeSumSeq)).reverse, 0.U)
+  rab.io.fromRob.walkSize := walkSizeSum
+  rab.io.fromRob.noNeedToWalk := noNeedToWalk
+
+  io.rabCommits := rab.io.commits
+  io.diffCommits.foreach(_ := rab.io.diffCommits.get)
 
   vectorMarkVec.zipWithIndex.foreach {
     case (mark, i) => {
@@ -909,7 +1002,8 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
 
   val instrCntReg = RegInit(0.U(64.W))
   val fuseCommitCnt = PopCount(io.commits.commitValid.zip(io.commits.info).map { case (v, i) => RegNext(v && CommitType.isFused(i.commitType)) })
-  val trueCommitCnt = RegNext(commitCnt) +& fuseCommitCnt
+  //val trueCommitCnt = RegNext(commitCnt) +& fuseCommitCnt
+  val trueCommitCnt = RegNext(io.commits.commitValid.zip(io.commits.info).map { case (v, i) => Mux(v, i.instrSize.getOrElse(0.U), 0.U) }.reduce(_ +& _)) +& fuseCommitCnt
   val retireCounter = Mux(RegNext(io.commits.isCommit), trueCommitCnt, 0.U)
   val instrCnt = instrCntReg + retireCounter
   instrCntReg := instrCnt
@@ -946,6 +1040,18 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
   QueuePerf(RobSize, PopCount((0 until RobSize).map(valid(_))), !allowEnqueue)
   XSPerfAccumulate("commitUop", ifCommit(commitCnt))
   XSPerfAccumulate("commitInstr", ifCommitReg(trueCommitCnt))
+  for(i <- (0 until (CommitWidth+1))){
+    XSPerfAccumulate(s"commitInstr_${i}_per_cycle", ifCommitReg(trueCommitCnt) === i.U)
+  }
+  val hasBlkCommit = io.commits.commitValid.contains(true.B) && io.commits.commitValid.contains(false.B)
+  when(hasBlkCommit){
+    for (fuType <- FuType.functionNameMap.keys) {
+    val fuName = FuType.functionNameMap(fuType)
+    val firstInvalidCommitUop = PriorityMux(io.commits.commitValid.map(v => !v), commitDebugUop)
+    val commitIsFuType = firstInvalidCommitUop.ctrl.fuType === fuType.U
+    XSPerfAccumulate(s"commitInstrBlockBy_${fuName}_instr_cnt", commitIsFuType)
+    }
+  }
   val commitIsMove = commitDebugUop.map(_.ctrl.isMove)
   XSPerfAccumulate("commitInstrMove", ifCommit(PopCount(io.commits.commitValid.zip(commitIsMove).map { case (v, m) => v && m })))
   val commitMoveElim = commitDebugUop.map(_.debugInfo.eliminatedMove)
@@ -972,6 +1078,13 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
   XSPerfAccumulate("waitBranchCycle", deqNotWritebacked && deqUopCommitType === CommitType.BRANCH)
   XSPerfAccumulate("waitLoadCycle", deqNotWritebacked && deqUopCommitType === CommitType.LOAD)
   XSPerfAccumulate("waitStoreCycle", deqNotWritebacked && deqUopCommitType === CommitType.STORE)
+  XSPerfAccumulate("commitCompressCntAll", PopCount(io.commits.commitValid.zip(io.commits.info).map { case (valid, info) => io.commits.isCommit && valid && (info.instrSize.getOrElse(0.U) > 1.U) }))
+  (2 to RenameWidth).foreach(i =>
+    XSPerfAccumulate(s"commitCompressCnt${i}", PopCount(io.commits.commitValid.zip(io.commits.info).map { case (valid, info) => io.commits.isCommit && valid && (info.instrSize.getOrElse(0.U) === i.U) }))
+  )
+  XSPerfAccumulate("compressSize", io.commits.commitValid.zip(io.commits.info).map { case (valid, info) => Mux(io.commits.isCommit && valid && (info.instrSize.getOrElse(0.U) > 1.U), info.instrSize.getOrElse(0.U), 0.U) }.reduce(_ +& _))
+  val decodeLatency = commitDebugUop.map(uop => uop.cf.predebugInfo.decodeTime - uop.cf.predebugInfo.fetchTime)
+  val renameLatency = commitDebugUop.map(uop => uop.debugInfo.renameTime - uop.cf.predebugInfo.decodeTime)
   val dispatchLatency = commitDebugUop.map(uop => uop.debugInfo.dispatchTime - uop.debugInfo.renameTime)
   val enqRsLatency = commitDebugUop.map(uop => uop.debugInfo.enqRsTime - uop.debugInfo.dispatchTime)
   val selectLatency = commitDebugUop.map(uop => uop.debugInfo.selectTime - uop.debugInfo.enqRsTime)
@@ -979,6 +1092,13 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
   val executeLatency = commitDebugUop.map(uop => uop.debugInfo.writebackTime - uop.debugInfo.issueTime)
   val rsFuLatency = commitDebugUop.map(uop => uop.debugInfo.writebackTime - uop.debugInfo.enqRsTime)
   val commitLatency = commitDebugUop.map(uop => timer - uop.debugInfo.writebackTime)
+  val nestedRedirect = state === s_walk && io.redirect.valid
+  XSPerfAccumulate("nestedRedirectNum", nestedRedirect)
+  val nestedRedirectWalking = RegInit(false.B)
+  val nestedRedirectWalkingNext = Mux(state === s_walk && io.redirect.valid, true.B, 
+  Mux(state === s_walk && walkFinished && rab.io.status.walkEnd, false.B, nestedRedirectWalking))
+  nestedRedirectWalking := nestedRedirectWalkingNext
+  XSPerfAccumulate("nestedRedirectWalkCycle", nestedRedirectWalking)
 
   def latencySum(cond: Seq[Bool], latency: Seq[UInt]): UInt = {
     cond.zip(latency).map(x => Mux(x._1, x._2, 0.U)).reduce(_ +& _)
@@ -988,6 +1108,8 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
     val fuName = FuType.functionNameMap(fuType)
     val commitIsFuType = io.commits.commitValid.zip(commitDebugUop).map(x => x._1 && x._2.ctrl.fuType === fuType.U)
     XSPerfAccumulate(s"${fuName}_instr_cnt", ifCommit(PopCount(commitIsFuType)))
+    XSPerfAccumulate(s"${fuName}_latency_decode", ifCommit(latencySum(commitIsFuType, decodeLatency)))
+    XSPerfAccumulate(s"${fuName}_latency_rename", ifCommit(latencySum(commitIsFuType, renameLatency)))
     XSPerfAccumulate(s"${fuName}_latency_dispatch", ifCommit(latencySum(commitIsFuType, dispatchLatency)))
     XSPerfAccumulate(s"${fuName}_latency_enq_rs", ifCommit(latencySum(commitIsFuType, enqRsLatency)))
     XSPerfAccumulate(s"${fuName}_latency_select", ifCommit(latencySum(commitIsFuType, selectLatency)))
@@ -1041,7 +1163,7 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
       difftestInstCmt.lqIdx := ZeroExt(uop.sqIdx.value, 7)
       difftestInstCmt.isLoad := io.commits.info(i).commitType === CommitType.LOAD
       difftestInstCmt.isStore := io.commits.info(i).commitType === CommitType.STORE
-      difftestInstCmt.nFused := Mux(CommitType.isFused(io.commits.info(i).commitType), 1.U, 0.U)
+      difftestInstCmt.nFused := CommitType.isFused(io.commits.info(i).commitType).asUInt + io.commits.info(i).instrSize.getOrElse(0.U) - 1.U
       difftestInstCmt.special := 0.U | (uop.cf.pc === "h80000000".U) // first ram instruction do not squash for spike
       // when committing an eliminated move instruction,
       // we must make sure that skip is properly set to false (output from EXU is random value)
@@ -1060,9 +1182,9 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
   }
 
   val debug_enqPtr = RegInit(0.U.asTypeOf(new RobPtr))
-  val debug_hasEnq = io.enq.canAccept && io.enq.req.map(_.valid).reduce(_||_)
+  val debug_hasEnq = io.enq.canAccept && io.enq.req.map(req => req.valid && req.bits.firstUop).reduce(_||_)
   when(debug_hasEnq) {
-    val enqVec = io.enq.req.map(_.valid)
+    val enqVec = io.enq.req.map(req => req.valid && req.bits.firstUop)
     val tailEnq = PriorityMux(enqVec.reverse, io.enq.req.map(_.bits).reverse)
     val headEnq = PriorityMux(enqVec, io.enq.req.map(_.bits))
     assert(headEnq.robIdx.value === debug_enqPtr.value)

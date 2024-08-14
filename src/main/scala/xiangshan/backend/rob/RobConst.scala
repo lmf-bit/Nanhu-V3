@@ -21,11 +21,10 @@
 
 package xiangshan.backend.rob
 
-import chisel3._
+import chisel3.{UInt, _}
 import chisel3.util._
 import org.chipsalliance.cde.config.Parameters
 import freechips.rocketchip.diplomacy.{LazyModule, LazyModuleImp}
-
 import difftest._
 import utils._
 import xs.utils._
@@ -98,4 +97,19 @@ class RobFlushInfo(implicit p: Parameters) extends XSBundle {
   val robIdx = new RobPtr
   val ftqOffset = UInt(log2Up(PredictWidth).W)
   val replayInst = Bool()
+}
+
+class RblEnqIO(implicit p: Parameters) extends XSBundle {
+  val canAccept = Output(Bool())
+  val isEmpty = Output(Bool())
+  val needAlloc = Vec(RenameWidth, Input(Bool()))
+  val req = Vec(RenameWidth, Flipped(ValidIO(new MicroOp)))
+}
+
+class RobToRblIO(implicit p: Parameters) extends XSBundle {
+  val commitValid = Input(Bool())
+  val commitSize = Input(UInt(log2Up(RblSize).W))
+  val walkValid = Input(Bool())
+  val walkSize = Input(UInt(log2Up(RblSize).W))
+  val robwalkEnd = Input(Bool())
 }

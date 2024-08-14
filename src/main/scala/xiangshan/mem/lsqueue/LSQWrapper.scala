@@ -301,7 +301,7 @@ class LsqEnqCtrl(implicit p: Parameters) extends XSModule with HasVectorParamete
   }
 
 
-  val maxAllocate = Seq(exuParameters.LduCnt, exuParameters.StuCnt).max
+  val maxAllocate = exuParameters.LduCnt + exuParameters.StuCnt
   val ldCanAccept = lqCounter >= loadEnqNumber +& maxAllocate.U
   val sqCanAccept = sqCounter >= storeEnqNumber +& maxAllocate.U
   // It is possible that t3_update and enq are true at the same clock cycle.
