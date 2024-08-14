@@ -230,7 +230,7 @@ class IntegerReservationStationImpl(outer:IntegerReservationStation, param:RsPar
       val issueDriver = Module(new DecoupledPipeline(param.bankNum, entriesNumPerBank))
       issueDriver.io.earlyWakeUpCancel := io.earlyWakeUpCancel
       if(iss._2.isAluMulDivStd) {
-        val selectRespArbiter = Module(new SelectRespArbiterOldest(param.bankNum, entriesNumPerBank, 3, false))
+        val selectRespArbiter = Module(new SelectRespArbiterOldest(param.bankNum, entriesNumPerBank, 3, true))
         finalSelectInfo <> selectRespArbiter.io.out
         selectRespArbiter.io.in(2) <> aluSelectNetwork.io.issueInfo(aluPortIdx)
         internalAluJmpWakeupSignals(aluJmpWkpPortIdx) := WakeupQueue(aluSelectNetwork.io.issueInfo(aluPortIdx), aluSelectNetwork.cfg.latency, io.redirect, io.earlyWakeUpCancel, p)
@@ -247,7 +247,7 @@ class IntegerReservationStationImpl(outer:IntegerReservationStation, param:RsPar
         XSPerfAccumulate(s"iss_${issuePortIdx}_Mul", finalSelectInfo.bits.info.fuType === FuType.mul && finalSelectInfo.fire)
         XSPerfAccumulate(s"iss_${issuePortIdx}_Div", finalSelectInfo.bits.info.fuType === FuType.div && finalSelectInfo.fire)
       } else if(iss._2.isBruJmpMisc) {
-        val selectRespArbiter = Module(new SelectRespArbiterOldest(param.bankNum, entriesNumPerBank, 3, false))
+        val selectRespArbiter = Module(new SelectRespArbiterOldest(param.bankNum, entriesNumPerBank, 3, true))
         finalSelectInfo <> selectRespArbiter.io.out
         selectRespArbiter.io.in(0) <> bruSelectNetwork.io.issueInfo(bruPortIdx)
         bruPortIdx = bruPortIdx + 1
@@ -267,7 +267,7 @@ class IntegerReservationStationImpl(outer:IntegerReservationStation, param:RsPar
         aluJmpWkpPortIdx = aluJmpWkpPortIdx + 1
         XSPerfAccumulate(s"iss_${issuePortIdx}_Alu", finalSelectInfo.bits.info.fuType === FuType.alu && finalSelectInfo.fire)
       } else if(iss._2.isAluMul) {
-        val selectRespArbiter = Module(new SelectRespArbiterOldest(param.bankNum, entriesNumPerBank, 2, false))
+        val selectRespArbiter = Module(new SelectRespArbiterOldest(param.bankNum, entriesNumPerBank, 2, true))
         finalSelectInfo <> selectRespArbiter.io.out
         selectRespArbiter.io.in(1) <> aluSelectNetwork.io.issueInfo(aluPortIdx)
         internalAluJmpWakeupSignals(aluJmpWkpPortIdx) := WakeupQueue(aluSelectNetwork.io.issueInfo(aluPortIdx), aluSelectNetwork.cfg.latency, io.redirect, io.earlyWakeUpCancel, p)
