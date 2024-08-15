@@ -232,6 +232,7 @@ class LoadReplayQueue(enablePerf: Boolean)(implicit p: Parameters) extends XSMod
     val tlbWakeup = Flipped(ValidIO(new LoadTLBWakeUpBundle))
     val degbugInfo = new ReplayQDebugBundle
     val mshrFull = Input(Bool())
+    val releaseMshrWakeUp = Input(Bool())
     val rawIsFull = Input(Bool())
     val loadDeqPtr = Input(new LqPtr)
     val robHead = Input(new RobPtr)
@@ -520,7 +521,7 @@ class LoadReplayQueue(enablePerf: Boolean)(implicit p: Parameters) extends XSMod
     }
     // case Dcache no mshr
     when(causeReg(i)(LoadReplayCauses.C_DR)) {
-      when((io.tlDchannelWakeup.map(_.valid).reduce(_|_) || !io.mshrFull)){
+      when((io.releaseMshrWakeUp || !io.mshrFull)){
         blockingReg(i) := false.B
       }
     }

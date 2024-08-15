@@ -1,4 +1,4 @@
-/***************************************************************************************
+ /***************************************************************************************
 * Copyright (c) 2020-2021 Institute of Computing Technology, Chinese Academy of Sciences
 * Copyright (c) 2020-2021 Peng Cheng Laboratory
 *
@@ -846,6 +846,7 @@ class MemBlockImp(outer: MemBlock) extends BasicExuBlockImp(outer)
   lsq.io.brqRedirect    <> Pipe(redirectIn)
   lsq.io.tlDchannelWakeup := dcache.io.lsu.tl_d_channel
   lsq.io.mshrFull := dcache.io.mshrFull
+  lsq.io.releaseMshrWakeUp := dcache.io.early_release_mshr
   staWritebacks.head.bits.redirectValid := lsq.io.rollback.valid
   staWritebacks.head.bits.redirect := lsq.io.rollback.bits
   staWritebacks.tail.foreach(e => {

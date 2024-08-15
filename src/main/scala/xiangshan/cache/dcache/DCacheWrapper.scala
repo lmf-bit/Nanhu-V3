@@ -484,6 +484,7 @@ class DCacheIO(implicit p: Parameters) extends DCacheBundle {
   val pf_req = Flipped(DecoupledIO(new L1PrefetchReq()))
   val l2_hint = Input(new DCacheTLDBypassLduIO)
   val lqEmpty = Input(Bool())
+  val early_release_mshr = Output(Bool())
 }
 
 
@@ -834,6 +835,8 @@ class DCacheImp(outer: DCache) extends LazyModuleImp(outer) with HasDCacheParame
   io.lsu.store.refill_to_mp_req.bits := Mux(missQueue.io.replace_pipe_req.fire, missQueue.io.replace_pipe_req.bits.id, 0.U)
   mainPipe.io.refill_data <> io.lsu.store.refill_to_mp_resp
 
+  //wake replayQueue DR
+  io.early_release_mshr := missQueue.io.replace_pipe_req.fire
   //amo
   io.lsu.store.amo_refill_to_mp_req := missQueue.io.main_pipe_req.fire
   when(missQueue.io.main_pipe_req.fire) {

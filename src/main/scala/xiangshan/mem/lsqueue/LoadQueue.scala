@@ -129,6 +129,7 @@ class LoadQueue(implicit p: Parameters) extends XSModule
     val tlbWakeup = Flipped(ValidIO(new LoadTLBWakeUpBundle))
     val tlDchannelWakeup = Input(Vec(2, new DCacheTLDBypassLduIO))
     val mshrFull = Input(Bool())
+    val releaseMshrWakeUp = Input(Bool())
     //store load violation
     val loadEnqRAW = Vec(LoadPipelineWidth, Flipped(new LoadEnqRAWBundle)) //LoadUnit S2 enq
     val stLdViolationQuery = Vec(StorePipelineWidth, Flipped(Valid(new storeRAWQueryBundle))) //storeUnit S1
@@ -210,6 +211,7 @@ class LoadQueue(implicit p: Parameters) extends XSModule
   replayQueue.io.sqEmpty := io.sqEmpty
   replayQueue.io.stDataReadySqPtr := io.stDataReadySqPtr
   replayQueue.io.mshrFull := io.mshrFull
+  replayQueue.io.releaseMshrWakeUp := io.releaseMshrWakeUp
   replayQueue.io.tlbWakeup := io.tlbWakeup
   replayQueue.io.loadDeqPtr := deqPtrExt
   replayQueue.io.robHead := io.robHead
