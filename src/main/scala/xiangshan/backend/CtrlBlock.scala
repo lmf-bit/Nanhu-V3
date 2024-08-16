@@ -588,6 +588,16 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
     XSPerfAccumulate("dispatchInWithBubbleNum", dispatchInWithBubble)
   }
 
+  // Topdown
+  val frontendStall = PopCount( rename.io.in map { ren => !(ren.valid || CommitType.isFused(ren.bits.ctrl.commitType)) &&  ren.ready })
+  val backendStall  = PopCount( rename.io.in map { ren =>  (ren.valid || CommitType.isFused(ren.bits.ctrl.commitType)) && !ren.ready })
+  val bidirectStall = PopCount( rename.io.in map { ren => !(ren.valid || CommitType.isFused(ren.bits.ctrl.commitType)) && !ren.ready })
+  val opSpec        = PopCount( rename.io.in map { ren =>  (ren.valid || CommitType.isFused(ren.bits.ctrl.commitType)) &&  ren.ready })
+  XSPerfAccumulate("Topdown_Frontend_Stall", frontendStall + bidirectStall)
+  XSPerfAccumulate("Topdown_Backend_Stall", backendStall)
+  XSPerfAccumulate("Topdown_Stall", frontendStall + backendStall + bidirectStall)
+  XSPerfAccumulate("Topdown_Op_spec", opSpec)
+
   private val allPerfInc = allPerfEvents.map(_._2.asTypeOf(new PerfEvent))
   val perfEvents = HPerfMonitor(csrevents, allPerfInc).getPerfEvents
   generatePerfEvent()

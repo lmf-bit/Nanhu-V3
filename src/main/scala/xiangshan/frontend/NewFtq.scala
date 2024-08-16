@@ -1194,6 +1194,8 @@ class Ftq(parentName:String = "Unknown")(implicit p: Parameters) extends XSModul
   val enq = io.fromBpu.resp
   val perf_redirect = backendRedirect
 
+  XSPerfAccumulate("Topdown_Mispredict", perf_redirect.valid)
+
   XSPerfAccumulate("entry", validEntries)
   XSPerfAccumulate("bpu_to_ftq_stall", enq.valid && !enq.ready)
   XSPerfAccumulate("mispredictRedirect", perf_redirect.valid && RedirectLevel.flushAfter === perf_redirect.bits.level)
