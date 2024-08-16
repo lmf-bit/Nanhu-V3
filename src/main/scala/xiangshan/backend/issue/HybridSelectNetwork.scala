@@ -145,7 +145,7 @@ class OldestSelectNetwork_TMP(bankNum:Int, entryNum:Int, issueNum:Int, val cfg:E
 //    val iss = finalSelectResult(i)
   val oSelector = Module(new OldestSelectPolicy(inSeq.length, haveEqual))
   oSelector.io.in.zip(inSeq).zipWithIndex.foreach({ case((in,info),idx) => {
-    in.valid := info.valid && !selectMask(idx) && !io.redirect.valid
+    in.valid := info.valid && !io.redirect.valid
     in.bits.robPtr := info.bits.info.robPtr
     in.bits.lpv := info.bits.info.lpv
   }})
@@ -156,7 +156,7 @@ class OldestSelectNetwork_TMP(bankNum:Int, entryNum:Int, issueNum:Int, val cfg:E
   //second oldest
   val secondOSelector = Module(new OldestSelectPolicy(inSeq.length, haveEqual))
   secondOSelector.io.in.zip(inSeq).zipWithIndex.foreach({ case((in,info),idx) => {
-    in.valid := info.valid && !(oldestValid && oldestRes(idx)) && !selectMask(idx) && !io.redirect.valid
+    in.valid := info.valid && !(oldestValid && oldestRes(idx)) && !io.redirect.valid
     in.bits.robPtr := info.bits.info.robPtr
     in.bits.lpv := info.bits.info.lpv
   }})
@@ -165,12 +165,17 @@ class OldestSelectNetwork_TMP(bankNum:Int, entryNum:Int, issueNum:Int, val cfg:E
   val secondOldestRes = secondOSelector.io.out.bits
 
 
-  val oldestValidRegOut = RegNext(oldestValid, false.B)
-  val oldestBitsRegOut = RegEnable(oldestRes, oldestValid)
+//  val oldestValidRegOut = RegNext(oldestValid, false.B)
+//  val oldestBitsRegOut = RegEnable(oldestRes, oldestValid)
+//
+//  val secondOldestValidRegOut = RegNext(secondOldestValid, false.B)
+//  val secondOldestBitsRegOut = RegEnable(secondOldestRes, secondOldestValid)
 
-  val secondOldestValidRegOut = RegNext(secondOldestValid, false.B)
-  val secondOldestBitsRegOut = RegEnable(secondOldestRes, secondOldestValid)
+  val oldestValidRegOut = oldestValid
+  val oldestBitsRegOut = oldestRes
 
+  val secondOldestValidRegOut = secondOldestValid
+  val secondOldestBitsRegOut = secondOldestRes
 
   val oldestSelectMask = oldestBitsRegOut.asBools.map(_ & oldestValidRegOut)
   val secondSelectMask = secondOldestBitsRegOut.asBools.map(_ & secondOldestValidRegOut)
