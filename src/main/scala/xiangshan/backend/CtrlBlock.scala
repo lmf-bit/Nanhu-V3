@@ -39,12 +39,20 @@ import xiangshan.backend.rob.{Rob, RobCSRIO, RobLsqIO, RobPtr, RollBackList}
 import xiangshan.backend.issue.DqDispatchNode
 import xiangshan.backend.execute.fu.csr.vcsr._
 import xs.utils.perf.HasPerfLogging
+import xiangshan.backend.ctrlblock.DebugLSIO
+import xiangshan.backend.ctrlblock.LsTopdownInfo
+import xiangshan.backend.rob.RobCoreTopDownIO
+import xiangshan.backend.execute.exublock.MemCoreTopDownIO
 
 class CtrlToFtqIO(implicit p: Parameters) extends XSBundle {
   val rob_commits = Vec(CommitWidth, Valid(new RobCommitInfo))
   val redirect = Valid(new Redirect)
 }
-
+class CoreDispatchTopDownIO extends Bundle {
+  // val l2MissMatch = Input(Bool())
+  // val l3MissMatch = Input(Bool())
+  val fromMem = Flipped(new MemCoreTopDownIO)
+}
 class CtrlBlock(implicit p: Parameters) extends LazyModule with HasXSParameter {
   val rob = LazyModule(new Rob)
   val wbMergeBuffer = LazyModule(new WbMergeBufferV2)
@@ -83,6 +91,8 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
       val exception = ValidIO(new ExceptionInfo)
       // to mem block
       val lsq = new RobLsqIO
+      val debug_ls = Flipped(new DebugLSIO)
+      val lsTopdownInfo = Vec(exuParameters.LduCnt, Input(new LsTopdownInfo))
     }
     val csrCtrl = Input(new CustomCSRCtrlIO)
     val perfInfo = Output(new Bundle{
@@ -100,7 +110,10 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
     val debug_int_rat = Vec(32, Output(UInt(PhyRegIdxWidth.W)))
     val debug_fp_rat = Vec(32, Output(UInt(PhyRegIdxWidth.W)))
     val debug_vec_rat = Output(Vec(32, UInt(VIPhyRegIdxWidth.W)))
-
+    val debugTopDown = new Bundle {
+      val fromRob = new RobCoreTopDownIO
+      val fromCore = new CoreDispatchTopDownIO
+    }
     val lsqVecDeqCnt = Input(new LsqVecDeqIO)
     val vecFaultOnlyFirst = Output(ValidIO(new ExuOutput))
   })
@@ -497,6 +510,9 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
 
   // rob to mem block
   io.robio.lsq <> rob.io.lsq
+  rob.io.debug_ls := io.robio.debug_ls
+  rob.io.lsTopdownInfo := io.robio.lsTopdownInfo
+  io.debugTopDown.fromRob := rob.io.debugTopDown.toCore
 
   // performance counter
   if (env.EnableTopDown) {

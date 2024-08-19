@@ -161,6 +161,11 @@ class XSCoreImp(outer: XSCoreBase) extends LazyModuleImp(outer)
     i.valid := r.isInt
     i.bits := r.preg
   })
+  // top-down
+  ctrlBlock.io.debugTopDown.fromCore.fromMem <> exuBlock.io.debugTopDown.toCore
+  ctrlBlock.io.robio.lsTopdownInfo <> exuBlock.io.debugTopDown.lsTopdownInfo
+  ctrlBlock.io.robio.debug_ls <> exuBlock.io.debug_ls
+  exuBlock.io.debugTopDown.robHeadVaddr := ctrlBlock.io.debugTopDown.fromRob.robHeadVaddr
 
   exuBlock.io.vectorAllocPregs.zip(ctrlBlock.io.vAllocPregs).foreach({ case(v, r) => v := Pipe(r)})
   exuBlock.io.vecFaultOnlyFirst := ctrlBlock.io.vecFaultOnlyFirst

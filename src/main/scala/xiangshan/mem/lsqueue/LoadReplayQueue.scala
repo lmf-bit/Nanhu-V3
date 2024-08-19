@@ -238,6 +238,7 @@ class LoadReplayQueue(enablePerf: Boolean)(implicit p: Parameters) extends XSMod
     val mmioReq = new UncacheWordIO
     val mmioWb = DecoupledIO(new ExuOutput)
     val mmioPaddr = UInt(PAddrBits.W)
+    val debugTopDown = new LoadQueueTopDownIO
   })
 
   private val counterRegMax = 1024
@@ -269,6 +270,7 @@ class LoadReplayQueue(enablePerf: Boolean)(implicit p: Parameters) extends XSMod
   // debug
   val debugReplayTimesReg = RegInit(VecInit(List.fill(LoadReplayQueueSize)(0.U(3.W))))
   val currentTimes = WireInit(debugReplayTimesReg)
+  val debug_vaddr = RegInit(VecInit(List.fill(LoadReplayQueueSize)(0.U(VAddrBits.W))))
   dontTouch(currentTimes)
 
   // replayQueue enq\deq control
@@ -402,7 +404,7 @@ class LoadReplayQueue(enablePerf: Boolean)(implicit p: Parameters) extends XSMod
       debugReplayTimesReg(enqIndex(i)) := Mux(currentTimes(enqIndex(i))==="b111".U(3.W), currentTimes(enqIndex(i)), currentTimes(enqIndex(i)) + 1.U)
       hintIDReg(enqIndex(i)) := 0.U
       causeReg(enqIndex(i)) := Mux(enqReqIsMMIO(i), 0.U, enq.bits.replay.replayCause.asUInt)
-
+      debug_vaddr(enqIndex(i))   := enq.bits.vaddr
       addrModule.io.wen(i) := true.B
       addrModule.io.waddr(i) := enqIndex(i)
       addrModule.io.wdata(i) := Mux(enqReqIsMMIO(i), enq.bits.paddr, enq.bits.vaddr)
@@ -759,6 +761,49 @@ class LoadReplayQueue(enablePerf: Boolean)(implicit p: Parameters) extends XSMod
     assert(allocatedReg(s1_mmioEntryIdx))
     assert(mmioHasReq(s1_mmioEntryIdx))
   }
+
+  // Topdown
+  val robHeadVaddr = io.debugTopDown.robHeadVaddr
+
+  val uop_wrapper = Wire(Vec(LoadReplayQueueSize, new ReplayQUopEntry))
+  (uop_wrapper.zipWithIndex).foreach {
+    case (u, i) => {
+      u := entryReg(i)
+    }
+  }
+  val lq_match_vec = (debug_vaddr.zip(allocatedReg)).map{case(va, alloc) => alloc && (va === robHeadVaddr.bits)}
+  val rob_head_lq_match = ParallelOperation(lq_match_vec.zip(uop_wrapper), (a: Tuple2[Bool, ReplayQUopEntry], b: Tuple2[Bool, ReplayQUopEntry]) => {
+    val (a_v, a_uop) = (a._1, a._2)
+    val (b_v, b_uop) = (b._1, b._2)
+
+    val res = Mux(a_v && b_v, Mux(isAfter(a_uop.robIdx, b_uop.robIdx), b_uop, a_uop),
+                  Mux(a_v, a_uop,
+                      Mux(b_v, b_uop,
+                                a_uop)))
+    (a_v || b_v, res)
+  })
+
+  val lq_match_bits = rob_head_lq_match._2
+  val lq_match      = rob_head_lq_match._1 && robHeadVaddr.valid
+  val lq_match_idx  = lq_match_bits.lqIdx.value
+
+  val rob_head_tlb_miss        = lq_match && causeReg(lq_match_idx)(LoadReplayCauses.C_TM)
+  val rob_head_nuke            = lq_match && causeReg(lq_match_idx)(LoadReplayCauses.C_NK)
+  val rob_head_mem_amb         = false.B
+  val rob_head_confilct_replay = lq_match && causeReg(lq_match_idx)(LoadReplayCauses.C_BC)
+  val rob_head_forward_fail    = lq_match && causeReg(lq_match_idx)(LoadReplayCauses.C_FF)
+  val rob_head_mshrfull_replay = lq_match && causeReg(lq_match_idx)(LoadReplayCauses.C_DR)
+  val rob_head_dcache_miss     = lq_match && causeReg(lq_match_idx)(LoadReplayCauses.C_DM)
+  val rob_head_rar_nack        = false.B
+  val rob_head_raw_nack        = lq_match && causeReg(lq_match_idx)(LoadReplayCauses.C_RAW)
+  val rob_head_other_replay    = lq_match && (rob_head_rar_nack || rob_head_raw_nack || rob_head_forward_fail)
+  val rob_head_vio_replay = rob_head_nuke || rob_head_mem_amb
+  val rob_head_blocked = lq_match && blockingReg(lq_match_idx)
+  io.debugTopDown.robHeadTlbReplay := rob_head_tlb_miss && !rob_head_blocked
+  io.debugTopDown.robHeadTlbMiss := rob_head_tlb_miss && rob_head_blocked
+  io.debugTopDown.robHeadLoadVio := rob_head_vio_replay
+  io.debugTopDown.robHeadLoadMSHR := rob_head_mshrfull_replay
+  io.debugTopDown.robHeadOtherReplay := rob_head_other_replay
 
   //  perf cnt
   val enqNumber               = PopCount(io.enq.map(enq => enq.fire && !enq.bits.replay.isReplayQReplay))
