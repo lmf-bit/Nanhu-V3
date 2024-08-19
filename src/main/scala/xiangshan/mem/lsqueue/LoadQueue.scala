@@ -102,7 +102,15 @@ class LqTriggerIO(implicit p: Parameters) extends XSBundle {
   val hitLoadAddrTriggerHitVec = Input(Vec(TriggerNum, Bool()))
   val lqLoadAddrTriggerHitVec = Output(Vec(TriggerNum, Bool()))
 }
-
+class LoadQueueTopDownIO(implicit p: Parameters) extends XSBundle {
+  val robHeadVaddr = Flipped(Valid(UInt(VAddrBits.W)))
+  val robHeadTlbReplay = Output(Bool())
+  val robHeadTlbMiss = Output(Bool())
+  val robHeadLoadVio = Output(Bool())
+  val robHeadLoadMSHR = Output(Bool())
+  // val robHeadMissInDTlb = Input(Bool())
+  val robHeadOtherReplay = Output(Bool())
+}
 // Load Queue
 class LoadQueue(implicit p: Parameters) extends XSModule
   with HasDCacheParameters
@@ -157,6 +165,7 @@ class LoadQueue(implicit p: Parameters) extends XSModule
     //debug info
     val debug_deqPtr = Input(new RobPtr)
     val debug_enqPtr = Input(new RobPtr)
+    val debugTopDown = new LoadQueueTopDownIO
   })
 
   private val replayQueue = Module(new LoadReplayQueue(enablePerf = true))
@@ -214,7 +223,7 @@ class LoadQueue(implicit p: Parameters) extends XSModule
   replayQueue.io.loadDeqPtr := deqPtrExt
   replayQueue.io.robHead := io.robHead
   replayQueue.io.stAddrReadyPtr := io.stAddrReadyPtr
-
+  replayQueue.io.debugTopDown <> io.debugTopDown
 
   io.mmioWb <> replayQueue.io.mmioWb
   io.uncache <> replayQueue.io.mmioReq

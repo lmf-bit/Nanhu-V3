@@ -42,6 +42,8 @@ import xiangshan.mem.prefetch._
 import xs.utils.mbist.MbistPipeline
 import xs.utils.perf.HasPerfLogging
 import xs.utils.{DelayN, ParallelPriorityMux, RegNextN, ValidIODelay}
+import xiangshan.backend.ctrlblock.DebugLSIO
+import xiangshan.backend.ctrlblock.LsTopdownInfo
 
 class Std(implicit p: Parameters) extends XSModule {
   val io = IO(new Bundle{
@@ -202,6 +204,13 @@ class MemBlock(implicit p: Parameters) extends BasicExuBlock
 
 }
 
+class MemCoreTopDownIO extends Bundle {
+  val robHeadMissInDCache = Output(Bool())
+  val robHeadTlbReplay = Output(Bool())
+  val robHeadTlbMiss = Output(Bool())
+  val robHeadLoadVio = Output(Bool())
+  val robHeadLoadMSHR = Output(Bool())
+}
 class MemBlockImp(outer: MemBlock) extends BasicExuBlockImp(outer)
   with HasXSParameter
   with HasFPUParameters
@@ -299,6 +308,12 @@ class MemBlockImp(outer: MemBlock) extends BasicExuBlockImp(outer)
       val wakeUp = Valid(new EarlyWakeUpInfo)
     }))
     val l2_hint = Input(new DCacheTLDBypassLduIO)
+    val debug_ls = new DebugLSIO
+    val debugTopDown = new Bundle{
+      val robHeadVaddr = Flipped(Valid(UInt(VAddrBits.W)))
+      val toCore = new MemCoreTopDownIO
+      val lsTopdownInfo = Vec(exuParameters.LduCnt, Output(new LsTopdownInfo))
+    }
   })
   io.lsqVecDeqCnt := DontCare
 
@@ -630,23 +645,14 @@ class MemBlockImp(outer: MemBlock) extends BasicExuBlockImp(outer)
     lsq.io.lduqueryAndUpdate(i) := loadUnits(i).io.lsq.s2_queryAndUpdateLQ
 
     val bnpi = outer.lduIssueNodes(i).in.head._2._1.bankNum / exuParameters.LduCnt
-//    slduIssues(i).rsFeedback := DontCare
-//    val selSldu = slduIssues(i).auxValid
-//    val slduValid = slduIssues(i).issue.valid && !slduIssues(i).issue.bits.uop.robIdx.needFlush(loadUnits(i).io.redirect)
     val lduValid = lduIssues(i).issue.valid && !lduIssues(i).issue.bits.uop.robIdx.needFlush(loadUnits(i).io.redirect)
-//    loadUnits(i).io.rsIdx := Mux(selSldu, slduIssues(i).rsIdx, lduIssues(i).rsIdx)
     loadUnits(i).io.rsIdx := lduIssues(i).rsIdx
     loadUnits(i).io.isFirstIssue := lduIssues(i).isFirstIssue
     // get input form dispatch
-//    loadUnits(i).io.rsIssueIn.valid := Mux(selSldu, slduValid, lduValid)
-//    loadUnits(i).io.rsIssueIn.bits := Mux(selSldu, slduIssues(i).issue.bits, lduIssues(i).issue.bits)
-//    loadUnits(i).io.auxValid := Mux(selSldu, slduIssues(i).auxValid, lduIssues(i).auxValid)
     loadUnits(i).io.rsIssueIn.valid := lduValid
     loadUnits(i).io.rsIssueIn.bits := lduIssues(i).issue.bits
     loadUnits(i).io.auxValid := lduIssues(i).auxValid
-//    slduIssues(i).issue.ready := loadUnits(i).io.rsIssueIn.ready
     lduIssues(i).issue.ready := loadUnits(i).io.rsIssueIn.ready
-//    when(selSldu){assert(lduIssues(i).issue.valid === false.B)}
     // dcache access
     loadUnits(i).io.dcache <> dcache.io.lsu.load(i)
     loadUnits(i).io.lduForwardMSHR <> dcache.io.lsu.lduForwardMSHR(i)
@@ -672,8 +678,6 @@ class MemBlockImp(outer: MemBlock) extends BasicExuBlockImp(outer)
     loadUnits(i).io.fastReplayIn.valid := RegNext(loadUnits(i).io.fastReplayOut.valid)
     loadUnits(i).io.fastReplayIn.bits := RegEnable(loadUnits(i).io.fastReplayOut.bits, loadUnits(i).io.fastReplayOut.fire)
     loadUnits(i).io.fastReplayOut.ready := RegNext(loadUnits(i).io.fastReplayIn.ready)
-//    //cancel
-//    io.earlyWakeUpCancel.foreach(w => w(i) := RegNext(loadUnits(i).io.cancel,false.B))
     //earlyWakeup and cancel
     io.lduEarlyWakeUp(i).cancel := RegNext(loadUnits(i).io.earlyWakeUp.cancel, false.B)
     io.lduEarlyWakeUp(i).wakeUp := loadUnits(i).io.earlyWakeUp.wakeUp
@@ -734,6 +738,14 @@ class MemBlockImp(outer: MemBlock) extends BasicExuBlockImp(outer)
     p"has trigger fire vec ${lduWritebacks(i).bits.uop.cf.trigger.backendCanFire}\n")
   }
 
+  
+  // top-down
+  for (i <- 0 until exuParameters.LduCnt) {
+    io.debug_ls.debugLsInfo(i) := loadUnits(i).io.debug_ls
+  }
+  for (i <- 0 until exuParameters.StuCnt) {
+    io.debug_ls.debugLsInfo.drop(exuParameters.LduCnt)(i) := storeUnits(i).io.debug_ls
+  }
   //mmio writeback
   val mmioCanWbVec = loadUnits.map(_.io.mmioWb.ready)
   val mmioCanWb = mmioCanWbVec.reduce(_|_)
@@ -950,6 +962,18 @@ class MemBlockImp(outer: MemBlock) extends BasicExuBlockImp(outer)
   io.lqFull := lsq.io.lqFull
   io.sqFull := lsq.io.sqFull
 
+  // top-down info
+  io.debugTopDown.lsTopdownInfo := loadUnits.map(_.io.lsTopdownInfo)
+
+  dcache.io.debugTopDown.robHeadVaddr := io.debugTopDown.robHeadVaddr
+  lsq.io.debugTopDown.robHeadVaddr := io.debugTopDown.robHeadVaddr
+  io.debugTopDown.toCore.robHeadMissInDCache := dcache.io.debugTopDown.robHeadMissInDCache
+  io.debugTopDown.toCore.robHeadTlbReplay := lsq.io.debugTopDown.robHeadTlbReplay
+  io.debugTopDown.toCore.robHeadTlbMiss := lsq.io.debugTopDown.robHeadTlbMiss
+  io.debugTopDown.toCore.robHeadLoadVio := lsq.io.debugTopDown.robHeadLoadVio
+  io.debugTopDown.toCore.robHeadLoadMSHR := lsq.io.debugTopDown.robHeadLoadMSHR
+  dcache.io.debugTopDown.robHeadOtherReplay := lsq.io.debugTopDown.robHeadOtherReplay
+  
   val ldDeqCount = PopCount(lduIssues.map(_.issue.valid))
   val stDeqCount = PopCount(staIssues.map(_.issue.valid))
   val rsDeqCount = ldDeqCount + stDeqCount

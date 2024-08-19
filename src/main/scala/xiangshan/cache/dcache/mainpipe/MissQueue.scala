@@ -241,6 +241,17 @@ class MissEntry(edge: TLEdgeOut)(implicit p: Parameters) extends DCacheModule wi
     val memSetPattenDetected = Input(Bool())
 
     val nMaxPrefetchEntry = Input(UInt(64.W))
+
+    // top-down
+    val rob_head_query = new DCacheBundle {
+      val vaddr = Input(UInt(VAddrBits.W))
+      val query_valid = Input(Bool())
+      val resp = Output(Bool())
+      def hit(e_vaddr: UInt): Bool = {
+        require(e_vaddr.getWidth == VAddrBits)
+        query_valid && vaddr(VAddrBits - 1, DCacheLineOffset) === e_vaddr(VAddrBits - 1, DCacheLineOffset)
+      }
+    }
   })
 
   assert(!RegNext(io.primary_valid && !io.primary_ready))
@@ -523,6 +534,7 @@ class MissEntry(edge: TLEdgeOut)(implicit p: Parameters) extends DCacheModule wi
   io.req_source := req.source
   io.need_refill_ldq := should_refill_data
 
+  io.rob_head_query.resp   := io.rob_head_query.hit(req.vaddr) && req_valid
   // io.debug_early_replace.valid := BoolStopWatch(io.replace_pipe_resp, io.refill_pipe_req.fire)
   io.debug_early_replace.valid := io.replace_pipe_resp
   // io.debug_early_replace.bits.idx := addr_to_dcache_set(req.vaddr)
@@ -603,6 +615,8 @@ class MissQueue(edge: TLEdgeOut)(implicit p: Parameters) extends DCacheModule wi
 
     val forwardRegState = Input(Vec(4, new MainPipeForwardRegState))
     val lduForward = Flipped(Vec(LoadPipelineWidth, new LduForwardFromMSHR))
+
+    val debugTopDown = new DCacheTopDownIO
   })
   
   // 128KBL1: FIXME: provide vaddr for l2
@@ -835,6 +849,16 @@ class MissQueue(edge: TLEdgeOut)(implicit p: Parameters) extends DCacheModule wi
   io.probe_block := Cat(probe_block_vec).orR
 
   io.full := ~Cat(entries.map(_.io.primary_ready)).andR
+
+
+  val rob_head_miss_in_dcache = VecInit(entries.map(_.io.rob_head_query.resp)).asUInt.orR
+  entries.foreach {
+    case e => {
+      e.io.rob_head_query.query_valid := io.debugTopDown.robHeadVaddr.valid
+      e.io.rob_head_query.vaddr := io.debugTopDown.robHeadVaddr.bits
+    }
+  }
+  io.debugTopDown.robHeadMissInDCache := rob_head_miss_in_dcache
 
   if (env.EnableDifftest) {
     val difftest = DifftestModule(new DiffRefillEvent)

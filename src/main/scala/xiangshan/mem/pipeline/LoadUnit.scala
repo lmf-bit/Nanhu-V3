@@ -31,6 +31,8 @@ import xiangshan.backend.rob.RobPtr
 import xiangshan.cache._
 import xiangshan.cache.mmu.{TlbCmd, TlbReq, TlbRequestIO, TlbResp}
 import xs.utils.perf.HasPerfLogging
+import xiangshan.backend.ctrlblock.DebugLsInfoBundle
+import xiangshan.backend.ctrlblock.LsTopdownInfo
 
 class LoadToLsqIO(implicit p: Parameters) extends XSBundle {
   val s1_lduMMIOPAddr = ValidIO(new LoadMMIOPaddrWriteBundle)
@@ -121,6 +123,9 @@ class LoadUnit(implicit p: Parameters) extends XSModule
       val cancel = Bool() //s2 cancel
       val wakeUp = Valid(new EarlyWakeUpInfo) //s1 wakeup
     })
+    // topdown
+    val debug_ls         = Output(new DebugLsInfoBundle)
+    val lsTopdownInfo    = Output(new LsTopdownInfo)
   })
 
   //redirect register fanout
@@ -704,6 +709,36 @@ class LoadUnit(implicit p: Parameters) extends XSModule
   io.enqRAWQueue.s2_enq.bits.ftqPtr := s2_out.bits.uop.cf.ftqPtr
   io.enqRAWQueue.s2_enq.bits.ftqOffset := s2_out.bits.uop.cf.ftqOffset
   io.enqRAWQueue.s3_cancel := RegNext(io.enqRAWQueue.s2_enq.valid && io.enqRAWQueue.s2_enqSuccess,false.B) && s3_needReplay
+
+
+  // top-down
+  // s1
+  io.debug_ls.s1_robIdx := s1_in.bits.uop.robIdx.value
+  io.debug_ls.s1_isLoadToLoadForward := false.B
+  io.debug_ls.s1_isTlbFirstMiss := s1_in.fire && s1_tlb_miss && !s1_in.bits.replay.isReplayQReplay
+  // s2
+  io.debug_ls.s2_robIdx := s2_in.bits.uop.robIdx.value
+  io.debug_ls.s2_isBankConflict := s2_in.fire && s2_bank_conflict
+  io.debug_ls.s2_isDcacheFirstMiss := s2_in.fire && io.dcache.resp.bits.miss && !s2_in.bits.replay.isReplayQReplay
+  io.debug_ls.s2_isForwardFail := s2_in.fire && s2_data_invalid
+  // s3
+  io.debug_ls.s3_robIdx := s3_in.bits.uop.robIdx.value
+  io.debug_ls.s3_isReplayFast := s3_in.fire && RegNext(io.fastReplayOut.valid)
+  io.debug_ls.s3_isReplayRS :=  io.feedbackSlow.bits.sourceType === RSFeedbackType.replayQFull && io.feedbackSlow.valid
+  io.debug_ls.s3_isReplaySlow := false.B
+  io.debug_ls.s3_isReplay := s3_in.fire && s3_causeReg.need_rep // include fast+slow+rs replay
+  io.debug_ls.replayCause := s3_causeReg.replayCause
+  io.debug_ls.replayCnt := 1.U
+
+  // Topdown
+  io.lsTopdownInfo.s1.robIdx          := s1_in.bits.uop.robIdx.value
+  io.lsTopdownInfo.s1.vaddr_valid     := s1_in.fire
+  io.lsTopdownInfo.s1.vaddr_bits      := s1_in.bits.vaddr
+  io.lsTopdownInfo.s2.robIdx          := s2_in.bits.uop.robIdx.value
+  io.lsTopdownInfo.s2.paddr_valid     := s2_in.fire && !RegNext(s1_tlb_miss)
+  io.lsTopdownInfo.s2.paddr_bits      := s2_in.bits.paddr
+  io.lsTopdownInfo.s2.first_real_miss := s2_cache_miss
+  io.lsTopdownInfo.s2.cache_miss_en   := s2_in.fire && !RegNext(s1_tlb_miss)
 
   val perfEvents = Seq(
     ("load_s0_in_fire         ", s0_valid),
