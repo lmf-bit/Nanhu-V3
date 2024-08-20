@@ -92,7 +92,9 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
       // to mem block
       val lsq = new RobLsqIO
       val debug_ls = Flipped(new DebugLSIO)
+      val robHeadLsIssue = Input(Bool())
       val lsTopdownInfo = Vec(exuParameters.LduCnt, Input(new LsTopdownInfo))
+      val robDeqPtr = Output(new RobPtr)
     }
     val csrCtrl = Input(new CustomCSRCtrlIO)
     val perfInfo = Output(new Bundle{
@@ -512,8 +514,11 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
   io.robio.lsq <> rob.io.lsq
   rob.io.debug_ls := io.robio.debug_ls
   rob.io.lsTopdownInfo := io.robio.lsTopdownInfo
+  rob.io.debugHeadLsIssue := io.robio.robHeadLsIssue
+  io.robio.robDeqPtr := rob.io.robDeqPtr
   io.debugTopDown.fromRob := rob.io.debugTopDown.toCore
-
+  dispatch.io.debugTopDown.fromRob := rob.io.debugTopDown.toDispatch
+  dispatch.io.debugTopDown.fromCore := io.debugTopDown.fromCore
   // performance counter
   if (env.EnableTopDown) {
     val stage2Redirect_valid_when_pending = pendingRedirect && redirectDelay.valid

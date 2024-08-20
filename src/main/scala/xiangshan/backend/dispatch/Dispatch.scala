@@ -27,6 +27,7 @@ import xiangshan.backend.rob._
 import xiangshan.mem.mdp._
 import xs.utils.perf.HasPerfLogging
 import xiangshan.VstartType
+import xiangshan.backend.CoreDispatchTopDownIO
 
 // read rob and enqueue
 class Dispatch(implicit p: Parameters) extends XSModule with HasPerfEvents with HasPerfLogging {
@@ -57,6 +58,10 @@ class Dispatch(implicit p: Parameters) extends XSModule with HasPerfEvents with 
     // lfst
     val lfst = new DispatchLFSTIO
     val vstart = Input(UInt(log2Ceil(VLEN + 1).W))
+    val debugTopDown = new Bundle {
+      val fromRob = Flipped(new RobDispatchTopDownIO)
+      val fromCore = new CoreDispatchTopDownIO
+    }
   })
 
   /**

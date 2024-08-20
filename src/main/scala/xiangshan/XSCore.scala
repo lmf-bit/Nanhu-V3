@@ -164,6 +164,9 @@ class XSCoreImp(outer: XSCoreBase) extends LazyModuleImp(outer)
   // top-down
   ctrlBlock.io.debugTopDown.fromCore.fromMem <> exuBlock.io.debugTopDown.toCore
   ctrlBlock.io.robio.lsTopdownInfo <> exuBlock.io.debugTopDown.lsTopdownInfo
+  ctrlBlock.io.robio.robHeadLsIssue := exuBlock.io.debugTopDown.robHeadLsIssue
+  exuBlock.io.debugTopDown.robDeqPtr := ctrlBlock.io.robio.robDeqPtr
+
   ctrlBlock.io.robio.debug_ls <> exuBlock.io.debug_ls
   exuBlock.io.debugTopDown.robHeadVaddr := ctrlBlock.io.debugTopDown.fromRob.robHeadVaddr
 

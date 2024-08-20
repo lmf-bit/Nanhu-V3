@@ -44,6 +44,7 @@ import xs.utils.perf.HasPerfLogging
 import xs.utils.{DelayN, ParallelPriorityMux, RegNextN, ValidIODelay}
 import xiangshan.backend.ctrlblock.DebugLSIO
 import xiangshan.backend.ctrlblock.LsTopdownInfo
+import xiangshan.backend.rob.RobPtr
 
 class Std(implicit p: Parameters) extends XSModule {
   val io = IO(new Bundle{
@@ -313,6 +314,8 @@ class MemBlockImp(outer: MemBlock) extends BasicExuBlockImp(outer)
       val robHeadVaddr = Flipped(Valid(UInt(VAddrBits.W)))
       val toCore = new MemCoreTopDownIO
       val lsTopdownInfo = Vec(exuParameters.LduCnt, Output(new LsTopdownInfo))
+      val robHeadLsIssue = Output(Bool())
+      val robDeqPtr = Input(new RobPtr)
     }
   })
   io.lsqVecDeqCnt := DontCare
@@ -976,6 +979,7 @@ class MemBlockImp(outer: MemBlock) extends BasicExuBlockImp(outer)
   io.debugTopDown.toCore.robHeadTlbMiss := lsq.io.debugTopDown.robHeadTlbMiss
   io.debugTopDown.toCore.robHeadLoadVio := lsq.io.debugTopDown.robHeadLoadVio
   io.debugTopDown.toCore.robHeadLoadMSHR := lsq.io.debugTopDown.robHeadLoadMSHR
+  io.debugTopDown.robHeadLsIssue := loadUnits.map(ldu => ldu.rsIssueIn.fire && ldu.rsIssueIn.bits.uop.robIdx === io.debugTopDown.robDeqPtr).reduce(_ || _)
   dcache.io.debugTopDown.robHeadOtherReplay := lsq.io.debugTopDown.robHeadOtherReplay
   
   val ldDeqCount = PopCount(lduIssues.map(_.issue.valid))

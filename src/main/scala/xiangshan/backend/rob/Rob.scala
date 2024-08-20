@@ -47,6 +47,10 @@ class RobCoreTopDownIO(implicit p: Parameters) extends XSBundle {
   val robHeadVaddr = Valid(UInt(VAddrBits.W))
   val robHeadPaddr = Valid(UInt(PAddrBits.W))
 }
+class RobDispatchTopDownIO extends Bundle {
+  val robTrueCommit = Output(UInt(64.W))
+  val robHeadLsIssue = Output(Bool())
+}
 class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
   with HasXSParameter
   with HasVectorParameters
@@ -85,11 +89,13 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
     val cpu_halt = Output(Bool())
     val wfi_enable = Input(Bool())
     val wbFromMergeBuffer = Vec(VectorMergeWbWidth, Flipped(ValidIO(new ExuOutput)))
+    val robDeqPtr = Output(new RobPtr)
     val debug_ls = Flipped(new DebugLSIO)
     val lsTopdownInfo = Vec(exuParameters.LduCnt, Input(new LsTopdownInfo))
+    val debugHeadLsIssue = Input(Bool())
     val debugTopDown = new Bundle {
       val toCore = new RobCoreTopDownIO
-      // val toDispatch = new RobDispatchTopDownIO
+      val toDispatch = new RobDispatchTopDownIO
     }
   })
 
@@ -1159,12 +1165,20 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
   }
 
   // top-down connection
+  io.robDeqPtr := deqPtr
+  // io.debugRobHead := debug_microOp(deqPtr.value)
+  val debug_lsIssue = WireDefault(debug_lsIssued)
+  debug_lsIssue(deqPtr.value) := io.debugHeadLsIssue
+  // lsIssue
+  when(io.debugHeadLsIssue) {
+    debug_lsIssued(deqPtr.value) := true.B
+  }
   io.debugTopDown.toCore.robHeadVaddr.valid := debug_lsTopdownInfo(deqPtr.value).s1.vaddr_valid
   io.debugTopDown.toCore.robHeadVaddr.bits := debug_lsTopdownInfo(deqPtr.value).s1.vaddr_bits
   io.debugTopDown.toCore.robHeadPaddr.valid := debug_lsTopdownInfo(deqPtr.value).s2.paddr_valid
   io.debugTopDown.toCore.robHeadPaddr.bits := debug_lsTopdownInfo(deqPtr.value).s2.paddr_bits
-  // io.debugTopDown.toDispatch.robTrueCommit := ifCommitReg(trueCommitCnt)
-  // io.debugTopDown.toDispatch.robHeadLsIssue := debug_lsIssue(deqPtr.value)
+  io.debugTopDown.toDispatch.robTrueCommit := ifCommitReg(trueCommitCnt)
+  io.debugTopDown.toDispatch.robHeadLsIssue := debug_lsIssue(deqPtr.value)
 
   //difftest signals
   val firstValidCommit = (deqPtr + PriorityMux(io.commits.commitValid, VecInit(List.tabulate(CommitWidth)(_.U(log2Up(CommitWidth).W))))).value
