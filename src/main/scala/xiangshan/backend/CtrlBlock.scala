@@ -49,7 +49,7 @@ class CtrlToFtqIO(implicit p: Parameters) extends XSBundle {
   val redirect = Valid(new Redirect)
 }
 class CoreDispatchTopDownIO extends Bundle {
-  // val l2MissMatch = Input(Bool())
+  val l2MissMatch = Input(Bool())
   // val l3MissMatch = Input(Bool())
   val fromMem = Flipped(new MemCoreTopDownIO)
 }

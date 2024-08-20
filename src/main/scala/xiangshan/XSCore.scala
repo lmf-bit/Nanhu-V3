@@ -91,6 +91,12 @@ class XSCoreImp(outer: XSCoreBase) extends LazyModuleImp(outer)
     val beu_errors = Output(new XSL1BusErrors())
     val dfx_reset = Input(new DFTResetSignals())
     val l2_hint = Input(new DCacheTLDBypassLduIO)
+    val debugTopDown = new Bundle {
+      // val robTrueCommit = Output(UInt(64.W))
+      val robHeadPaddr = Valid(UInt(PAddrBits.W))
+      val l2MissMatch = Input(Bool())
+      // val l3MissMatch = Input(Bool())
+    }
   })
 
   println(s"FPGAPlatform:${env.FPGAPlatform} EnableDebug:${env.EnableDebug}")
@@ -162,7 +168,9 @@ class XSCoreImp(outer: XSCoreBase) extends LazyModuleImp(outer)
     i.bits := r.preg
   })
   // top-down
+  io.debugTopDown.robHeadPaddr := ctrlBlock.io.debugTopDown.fromRob.robHeadPaddr
   ctrlBlock.io.debugTopDown.fromCore.fromMem <> exuBlock.io.debugTopDown.toCore
+  ctrlBlock.io.debugTopDown.fromCore.l2MissMatch <> io.debugTopDown.l2MissMatch
   ctrlBlock.io.robio.lsTopdownInfo <> exuBlock.io.debugTopDown.lsTopdownInfo
   ctrlBlock.io.robio.robHeadLsIssue := exuBlock.io.debugTopDown.robHeadLsIssue
   exuBlock.io.debugTopDown.robDeqPtr := ctrlBlock.io.robio.robDeqPtr
