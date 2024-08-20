@@ -203,8 +203,8 @@ class RawDataModule[T <: Data](gen: T, numEntries: Int, numRead: Int, numWrite: 
 }
 
 class ReplayQDebugBundle(implicit p: Parameters) extends XSBundle{
-  val validNum = Output(UInt(log2Up(LoadReplayQueueSize).W))
-  val issueNum = Output(UInt(log2Up(LoadReplayQueueSize).W))
+  val validNum = Output(UInt((log2Up(LoadReplayQueueSize) + 1).W))
+  val issueNum = Output(UInt((log2Up(LoadReplayQueueSize) + 1).W))
   val debug_deqPtr = Input(new RobPtr)
   val debug_enqPtr = Input(new RobPtr)
 }
@@ -240,7 +240,7 @@ class LoadReplayQueue(enablePerf: Boolean)(implicit p: Parameters) extends XSMod
     val mmioPaddr = UInt(PAddrBits.W)
   })
 
-  private val counterRegMax = 1024
+  private val counterRegMax = 128
   private val penaltyRegWidth = log2Up(counterRegMax) + 1
   private val tlbMissCounter = 7
   private val issueSelectParallelN = 8
@@ -259,7 +259,7 @@ class LoadReplayQueue(enablePerf: Boolean)(implicit p: Parameters) extends XSMod
   val mmioReg = RegInit(VecInit(List.fill(LoadReplayQueueSize)(false.B)))
   // replay penalty, prevent dead block
   val penaltyReg = RegInit(VecInit(List.fill(LoadReplayQueueSize)(0.U(penaltyRegWidth.W))))
-  val counterReg = RegInit(VecInit(List.fill(LoadReplayQueueSize)(0.U(log2Up(counterRegMax).W))))
+  val counterReg = RegInit(VecInit(List.fill(LoadReplayQueueSize)(0.U((log2Up(counterRegMax) + 1).W))))
   // hintIDReg: store the Hint ID of TLB miss or Dcache miss
   val hintIDReg = RegInit(VecInit(List.fill(LoadReplayQueueSize)(0.U(reqIdWidth.W))))
   // mshrIDreg: store the L1 MissQ mshr ID
