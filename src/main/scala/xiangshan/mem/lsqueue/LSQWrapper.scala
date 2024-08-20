@@ -107,6 +107,8 @@ class LsqWrappper(implicit p: Parameters) extends XSModule with HasDCacheParamet
     val loadEnqRAW = Vec(LoadPipelineWidth, Flipped(new LoadEnqRAWBundle)) //Load S2 enq
     val mshrFull = Input(Bool())
     val lduqueryAndUpdate = Vec(LoadPipelineWidth, Flipped(ValidIO(new LoadQueueDataUpdateBundle))) //from loadUnit S2
+    // top-down
+    val debugTopDown = new LoadQueueTopDownIO
   })
 
   dontTouch(io.tlb_hint)
@@ -173,7 +175,8 @@ class LsqWrappper(implicit p: Parameters) extends XSModule with HasDCacheParamet
   loadQueue.io.stDataReadySqPtr := storeQueue.io.stDataReadySqPtr
   loadQueue.io.storeDataWbPtr := io.storeDataWbPtr
   loadQueue.io.ldLdViolationResp <> io.loadViolationQuery
-
+  loadQueue.io.debugTopDown <> io.debugTopDown
+  
   io.lqDeq := loadQueue.io.lqDeq
   io.replayQLdStop := loadQueue.io.replayQLdStop
   loadQueue.io.fastReplayStop := io.fastReplayStop

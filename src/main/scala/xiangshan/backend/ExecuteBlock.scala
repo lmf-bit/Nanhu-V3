@@ -46,6 +46,10 @@ import xiangshan.vector.vbackend.vissue.vrs.VectorReservationStation
 import xiangshan.vector.vbackend.vregfile.VRegfileTop
 import xs.utils.{DFTResetSignals, ModuleNode, RegNextN, ResetGen, ResetGenNode}
 import xiangshan.mem._
+import xiangshan.backend.ctrlblock.DebugLSIO
+import xiangshan.backend.execute.exublock.MemCoreTopDownIO
+import xiangshan.backend.ctrlblock.LsTopdownInfo
+import xiangshan.backend.rob.RobPtr
 class ExecuteBlock(val parentName:String = "Unknown")(implicit p:Parameters) extends LazyModule with HasXSParameter with HasVectorParameters {
   val integerReservationStation: IntegerReservationStation = LazyModule(new IntegerReservationStation)
   val floatingReservationStation: FloatingReservationStation = LazyModule(new FloatingReservationStation)
@@ -140,6 +144,16 @@ class ExecuteBlockImp(outer:ExecuteBlock) extends LazyModuleImp(outer)
     val debug_int_rat = Input(Vec(32, UInt(PhyRegIdxWidth.W)))
     val debug_fp_rat = Input(Vec(32, UInt(PhyRegIdxWidth.W)))
     val debug_vec_rat = Input(Vec(32, UInt(PhyRegIdxWidth.W)))
+
+    //top-down
+    val debug_ls = new DebugLSIO
+    val debugTopDown = new Bundle{
+      val robDeqPtr = Input(new RobPtr)
+      val robHeadVaddr = Flipped(Valid(UInt(VAddrBits.W)))
+      val toCore = new MemCoreTopDownIO
+      val lsTopdownInfo = Vec(exuParameters.LduCnt, Output(new LsTopdownInfo))
+      val robHeadLsIssue = Output(Bool())
+    }
   })
   private val intRs = outer.integerReservationStation.module
   private val fpRs = outer.floatingReservationStation.module
@@ -238,6 +252,7 @@ class ExecuteBlockImp(outer:ExecuteBlock) extends LazyModuleImp(outer)
   memBlk.io.tlbCsr <> intBlk.io.csrio.tlb
   memBlk.io.hartId := io.hartId
   memBlk.io.l2_hint := io.l2_hint
+  
   io.lqDeq := RegNext(memBlk.io.lqDeq)
 
   io.lsqVecDeqCnt <> memBlk.io.lsqVecDeqCnt
@@ -251,7 +266,10 @@ class ExecuteBlockImp(outer:ExecuteBlock) extends LazyModuleImp(outer)
   io.stIn := memBlk.io.stIn
   io.enqLsq <> memBlk.io.enqLsq
   io.rob <> memBlk.io.lsqio.rob
-
+  // top-down
+  io.debug_ls <> memBlk.io.debug_ls
+  io.debugTopDown <> memBlk.io.debugTopDown
+  
   //issue + redirect + exception
   private val pcReadPortNum = rf.pcReadNum + writeback.io.pcReadData.length + 1
   private val pcMem = Module(new PcMem(pcReadPortNum, 1))

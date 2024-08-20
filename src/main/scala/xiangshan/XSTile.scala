@@ -208,6 +208,8 @@ class XSTileImp(outer: XSTile)(implicit p: Parameters) extends LazyModuleImp(out
   if(outer.l2cache.isDefined){
     require(outer.core.module.io.perfEvents.length == outer.l2cache.get.module.io_perf.length)
     outer.core.module.io.perfEvents.zip(outer.l2cache.get.module.io_perf).foreach(x => x._1.value := x._2.value)
+    outer.core.module.io.debugTopDown.l2MissMatch := outer.l2cache.get.module.io.debugTopDown.l2MissMatch
+    outer.l2cache.get.module.io.debugTopDown.robHeadPaddr := outer.core.module.io.debugTopDown.robHeadPaddr
   }
   else {
     outer.core.module.io.perfEvents <> DontCare

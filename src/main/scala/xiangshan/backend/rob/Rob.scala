@@ -32,6 +32,10 @@ import xs.utils.perf.HasPerfLogging
 import xiangshan.VstartType
 import xiangshan.backend.execute.fu.csr.CSROpType
 import xiangshan.backend.rename.SnapshotGenerator
+import xiangshan.backend.ctrlblock.DebugLsInfo
+import xiangshan.backend.ctrlblock.LsTopdownInfo
+import xiangshan.mem.LqPtr
+import xiangshan.backend.ctrlblock.DebugLSIO
 
 class Rob(implicit p: Parameters) extends LazyModule with HasXSParameter {
   val wbNodeParam = WriteBackSinkParam(name = "ROB", sinkType = WriteBackSinkType.rob)
@@ -39,6 +43,14 @@ class Rob(implicit p: Parameters) extends LazyModule with HasXSParameter {
   lazy val module = new RobImp(this)
 }
 
+class RobCoreTopDownIO(implicit p: Parameters) extends XSBundle {
+  val robHeadVaddr = Valid(UInt(VAddrBits.W))
+  val robHeadPaddr = Valid(UInt(PAddrBits.W))
+}
+class RobDispatchTopDownIO extends Bundle {
+  val robTrueCommit = Output(UInt(64.W))
+  val robHeadLsIssue = Output(Bool())
+}
 class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
   with HasXSParameter
   with HasVectorParameters
@@ -77,6 +89,14 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
     val cpu_halt = Output(Bool())
     val wfi_enable = Input(Bool())
     val wbFromMergeBuffer = Vec(VectorMergeWbWidth, Flipped(ValidIO(new ExuOutput)))
+    val robDeqPtr = Output(new RobPtr)
+    val debug_ls = Flipped(new DebugLSIO)
+    val lsTopdownInfo = Vec(exuParameters.LduCnt, Input(new LsTopdownInfo))
+    val debugHeadLsIssue = Input(Bool())
+    val debugTopDown = new Bundle {
+      val toCore = new RobCoreTopDownIO
+      val toDispatch = new RobDispatchTopDownIO
+    }
   })
 
   val wbWithFFlag = writebackIn.filter(wb => wb._1.writeFFlags)
@@ -153,6 +173,10 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
   val debug_microOp = Reg(Vec(RobSize, new MicroOp))
   val debug_exuData = Reg(Vec(RobSize, UInt(XLEN.W)))
   val debug_exuDebug = Reg(Vec(RobSize, new DebugBundle))
+  val debug_lsInfo = RegInit(VecInit(Seq.fill(RobSize)(DebugLsInfo.init)))
+  val debug_lsTopdownInfo = RegInit(VecInit(Seq.fill(RobSize)(LsTopdownInfo.init)))
+  val debug_lqIdxValid = RegInit(VecInit.fill(RobSize)(false.B))
+  val debug_lsIssued = RegInit(VecInit.fill(RobSize)(false.B))
   
   val vstartNeedSet = Reg(Vec(RobSize, Bool()))
 
@@ -257,6 +281,10 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
       debug_microOp(enqIndex).debugInfo.selectTime := timer
       debug_microOp(enqIndex).debugInfo.issueTime := timer
       debug_microOp(enqIndex).debugInfo.writebackTime := timer
+      debug_lsInfo(enqIndex) := DebugLsInfo.init
+      debug_lsTopdownInfo(enqIndex) := LsTopdownInfo.init
+      debug_lqIdxValid(enqIndex) := false.B
+      debug_lsIssued(enqIndex) := false.B
       microOpPerfInfo(enqIndex) := Cat(enqUop.ctrl.isMove, enqUop.cf.loadWaitBit).asTypeOf(microOpPerfInfo.t)
       // for func
       when(enqUop.ctrl.blockBackward) {
@@ -784,6 +812,17 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
   }
 }
 
+  // debug_inst update
+  for (i <- 0 until (exuParameters.LduCnt + exuParameters.StuCnt)) {
+    debug_lsInfo(io.debug_ls.debugLsInfo(i).s1_robIdx).s1SignalEnable(io.debug_ls.debugLsInfo(i))
+    debug_lsInfo(io.debug_ls.debugLsInfo(i).s2_robIdx).s2SignalEnable(io.debug_ls.debugLsInfo(i))
+    debug_lsInfo(io.debug_ls.debugLsInfo(i).s3_robIdx).s3SignalEnable(io.debug_ls.debugLsInfo(i))
+  }
+  for (i <- 0 until exuParameters.LduCnt) {
+    debug_lsTopdownInfo(io.lsTopdownInfo(i).s1.robIdx).s1SignalEnable(io.lsTopdownInfo(i))
+    debug_lsTopdownInfo(io.lsTopdownInfo(i).s2.robIdx).s2SignalEnable(io.lsTopdownInfo(i))
+  }
+
   // status field: writebacked
   // enqueue logic set 6 writebacked to false
   for (i <- 0 until RenameWidth) {
@@ -1124,6 +1163,22 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
       XSPerfAccumulate(s"${fuName}_latency_execute_fma", ifCommit(latencySum(commitIsFma, executeLatency)))
     }
   }
+
+  // top-down connection
+  io.robDeqPtr := deqPtr
+  // io.debugRobHead := debug_microOp(deqPtr.value)
+  val debug_lsIssue = WireDefault(debug_lsIssued)
+  debug_lsIssue(deqPtr.value) := io.debugHeadLsIssue
+  // lsIssue
+  when(io.debugHeadLsIssue) {
+    debug_lsIssued(deqPtr.value) := true.B
+  }
+  io.debugTopDown.toCore.robHeadVaddr.valid := debug_lsTopdownInfo(deqPtr.value).s1.vaddr_valid
+  io.debugTopDown.toCore.robHeadVaddr.bits := debug_lsTopdownInfo(deqPtr.value).s1.vaddr_bits
+  io.debugTopDown.toCore.robHeadPaddr.valid := debug_lsTopdownInfo(deqPtr.value).s2.paddr_valid
+  io.debugTopDown.toCore.robHeadPaddr.bits := debug_lsTopdownInfo(deqPtr.value).s2.paddr_bits
+  io.debugTopDown.toDispatch.robTrueCommit := ifCommitReg(trueCommitCnt)
+  io.debugTopDown.toDispatch.robHeadLsIssue := debug_lsIssue(deqPtr.value)
 
   //difftest signals
   val firstValidCommit = (deqPtr + PriorityMux(io.commits.commitValid, VecInit(List.tabulate(CommitWidth)(_.U(log2Up(CommitWidth).W))))).value
