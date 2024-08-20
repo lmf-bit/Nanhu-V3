@@ -619,7 +619,7 @@ class LoadUnit(implicit p: Parameters) extends XSModule
   io.ldout.valid := hitLoadOutValidReg || s3_lsqMMIOOutputValid
   val s3_load_wb_meta_reg = RegEnable(Mux(hitLoadOut.valid,hitLoadOut.bits,io.mmioWb.bits), hitLoadOut.valid | io.mmioWb.valid)
   io.ldout.bits := s3_load_wb_meta_reg
-  private val s3_wbHasException = ExceptionNO.selectByFu(io.ldout.bits.uop.cf.exceptionVec, lduCfg)
+  private val s3_wbHasException = ExceptionNO.selectByFu(io.ldout.bits.uop.cf.exceptionVec, lduCfg).reduce(_|_)
 
   io.ldout.bits.data := Mux(s3_wbHasException, 0.U, Mux(hitLoadOutValidReg, s3_rdataPartialLoad, s3_load_wb_meta_reg.data))
 
