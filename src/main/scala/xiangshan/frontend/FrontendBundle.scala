@@ -522,7 +522,7 @@ class BranchPredictionResp(implicit p: Parameters) extends XSBundle with HasBPUC
   val s3 = new BranchPredictionBundle
 
   val lastStageMeta = UInt(MaxMetaLength.W)
-  val lastStageSpecInfo = new SpeculativeInfo
+  val lastStageSpecInfo = new FtqRedirectEntry
   val lastStageFtbEntry = new FTBEntry
   
   val s1_uftbHit = Bool()
