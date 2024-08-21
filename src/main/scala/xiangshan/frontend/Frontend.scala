@@ -64,6 +64,9 @@ class FrontendImp (outer: Frontend) extends LazyModuleImp(outer)
         val bpWrong = Output(UInt(XLEN.W))
       }
     }
+    val debugTopDown = new Bundle {
+      val robHeadVaddr = Flipped(Valid(UInt(VAddrBits.W)))
+    }
   })
   //fence.i signals bundle not used, tie to default value
   //io.fencei.done := true.B
@@ -74,6 +77,14 @@ class FrontendImp (outer: Frontend) extends LazyModuleImp(outer)
   val ifu     = Module(new NewIFU)
   val ibuffer =  Module(new IBuffer)
   val ftq = Module(new Ftq)
+
+  val FlushControlRedirect = RegNext(io.backend.toFtq.redirect.bits.debugIsCtrl)
+  val FlushMemVioRedirect = RegNext(io.backend.toFtq.redirect.bits.debugIsMemVio)
+  val FlushControlBTBMiss = Wire(Bool())
+  val FlushTAGEMiss = Wire(Bool())
+  val FlushSCMiss = Wire(Bool())
+  val FlushITTAGEMiss = Wire(Bool())
+  val FlushRASMiss = Wire(Bool())
 
   val tlbCsr = DelayN(io.tlbCsr, 2)
   val csrCtrl = DelayN(io.csrCtrl, 2)
@@ -168,6 +179,8 @@ class FrontendImp (outer: Frontend) extends LazyModuleImp(outer)
 
   ifu.io.icacheInter.resp <>    icache.io.fetch.resp
   ifu.io.icacheInter.icacheReady :=  icache.io.toIFU
+  ifu.io.icacheInter.topdownIcacheMiss := icache.io.fetch.topdownIcacheMiss
+  ifu.io.icacheInter.topdownItlbMiss := icache.io.fetch.topdownItlbMiss
   icache.io.stop := ifu.io.icacheStop
 
   ifu.io.icachePerfInfo := icache.io.perfInfo
@@ -189,7 +202,22 @@ class FrontendImp (outer: Frontend) extends LazyModuleImp(outer)
   ifu.io.rob_commits <> io.backend.toFtq.rob_commits
 
   ibuffer.io.flush := needFlush
+  ibuffer.io.ControlRedirect := FlushControlRedirect
+  ibuffer.io.MemVioRedirect := FlushMemVioRedirect
+  ibuffer.io.ControlBTBMissBubble := FlushControlBTBMiss
+  ibuffer.io.TAGEMissBubble := FlushTAGEMiss
+  ibuffer.io.SCMissBubble := FlushSCMiss
+  ibuffer.io.ITTAGEMissBubble := FlushITTAGEMiss
+  ibuffer.io.RASMissBubble := FlushRASMiss
+
+  FlushControlBTBMiss := ftq.io.ControlBTBMissBubble
+  FlushTAGEMiss := ftq.io.TAGEMissBubble
+  FlushSCMiss := ftq.io.SCMissBubble
+  FlushITTAGEMiss := ftq.io.ITTAGEMissBubble
+  FlushRASMiss := ftq.io.RASMissBubble
+
   io.backend.cfVec <> ibuffer.io.out
+  io.backend.stallReason <> ibuffer.io.stallReason
 
   instrUncache.io.req   <> ifu.io.uncacheInter.toUncache
   ifu.io.uncacheInter.fromUncache <> instrUncache.io.resp

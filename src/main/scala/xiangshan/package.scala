@@ -121,6 +121,8 @@ package object xiangshan {
 
     def isMemExu(fuType: UInt): Bool = memoryTypes.map(_ === fuType).reduce(_||_)
 
+    def isDivSqrt(fuType: UInt): Bool = fuType === div || fuType === fDivSqrt
+
     def isLoadStore(fuType: UInt): Bool = isMemExu(fuType)
 
     def isStore(fuType: UInt): Bool = fuType === stu
@@ -405,5 +407,67 @@ package object xiangshan {
     def write = "b00".U
     def hold = "b01".U
     def X = BitPat("b??")
+  }
+
+  object TopDownCounters extends Enumeration {
+    val NoStall = Value("NoStall") // Base
+    // frontend
+    val OverrideBubble = Value("OverrideBubble")
+    val FtqUpdateBubble = Value("FtqUpdateBubble")
+    // val ControlRedirectBubble = Value("ControlRedirectBubble")
+    val TAGEMissBubble = Value("TAGEMissBubble")
+    val SCMissBubble = Value("SCMissBubble")
+    val ITTAGEMissBubble = Value("ITTAGEMissBubble")
+    val RASMissBubble = Value("RASMissBubble")
+    val MemVioRedirectBubble = Value("MemVioRedirectBubble")
+    val OtherRedirectBubble = Value("OtherRedirectBubble")
+    val FtqFullStall = Value("FtqFullStall")
+
+    val ICacheMissBubble = Value("ICacheMissBubble")
+    val ITLBMissBubble = Value("ITLBMissBubble")
+    val BTBMissBubble = Value("BTBMissBubble")
+    val FetchFragBubble = Value("FetchFragBubble")
+
+    // backend
+    // long inst stall at rob head
+    val DivStall = Value("DivStall") // int div, float div/sqrt
+    val IntNotReadyStall = Value("IntNotReadyStall") // int-inst at rob head not issue
+    val FPNotReadyStall = Value("FPNotReadyStall") // fp-inst at rob head not issue
+    val MemNotReadyStall = Value("MemNotReadyStall") // mem-inst at rob head not issue
+    // freelist full
+    val IntFlStall = Value("IntFlStall")
+    val FpFlStall = Value("FpFlStall")
+    val VecFlStall = Value("VecFlStall")
+    val V0FlStall = Value("V0FlStall")
+    val VlFlStall = Value("VlFlStall")
+    val MultiFlStall = Value("MultiFlStall")
+    // dispatch queue full
+    val IntDqStall = Value("IntDqStall")
+    val FpDqStall = Value("FpDqStall")
+    val LsDqStall = Value("LsDqStall")
+
+    // memblock
+    val LoadTLBStall = Value("LoadTLBStall")
+    val LoadL1Stall = Value("LoadL1Stall")
+    val LoadL2Stall = Value("LoadL2Stall")
+    val LoadL3Stall = Value("LoadL3Stall")
+    val LoadMemStall = Value("LoadMemStall")
+    val StoreStall = Value("StoreStall") // include store tlb miss
+    val AtomicStall = Value("AtomicStall") // atomic, load reserved, store conditional
+
+    // xs replay (different to gem5)
+    val LoadVioReplayStall = Value("LoadVioReplayStall")
+    val LoadMSHRReplayStall = Value("LoadMSHRReplayStall")
+
+    // bad speculation
+    val ControlRecoveryStall = Value("ControlRecoveryStall")
+    val MemVioRecoveryStall = Value("MemVioRecoveryStall")
+    val OtherRecoveryStall = Value("OtherRecoveryStall")
+
+    val FlushedInsts = Value("FlushedInsts") // control flushed, memvio flushed, others
+
+    val OtherCoreStall = Value("OtherCoreStall")
+
+    val NumStallReasons = Value("NumStallReasons")
   }
 }

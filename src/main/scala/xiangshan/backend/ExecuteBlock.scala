@@ -151,6 +151,8 @@ class ExecuteBlockImp(outer:ExecuteBlock) extends LazyModuleImp(outer)
       val toCore = new MemCoreTopDownIO
       val lsTopdownInfo = Vec(exuParameters.LduCnt, Output(new LsTopdownInfo))
     }
+    val lqCanAccept = Output(Bool())
+    val sqCanAccept = Output(Bool())
   })
   private val intRs = outer.integerReservationStation.module
   private val fpRs = outer.floatingReservationStation.module
@@ -263,6 +265,8 @@ class ExecuteBlockImp(outer:ExecuteBlock) extends LazyModuleImp(outer)
   io.enqLsq <> memBlk.io.enqLsq
   io.rob <> memBlk.io.lsqio.rob
   // top-down
+  io.lqCanAccept <> memBlk.io.lsqio.lqCanAccept
+  io.sqCanAccept <> memBlk.io.lsqio.sqCanAccept
   io.debug_ls <> memBlk.io.debug_ls
   io.debugTopDown <> memBlk.io.debugTopDown
   

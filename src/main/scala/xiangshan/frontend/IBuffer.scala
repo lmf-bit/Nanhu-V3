@@ -32,9 +32,17 @@ class IbufPtr(implicit p: Parameters) extends CircularQueuePtr[IbufPtr](
 
 class IBufferIO(implicit p: Parameters) extends XSBundle {
   val flush = Input(Bool())
+  val ControlRedirect = Input(Bool())
+  val ControlBTBMissBubble = Input(Bool())
+  val TAGEMissBubble = Input(Bool())
+  val SCMissBubble = Input(Bool())
+  val ITTAGEMissBubble = Input(Bool())
+  val RASMissBubble = Input(Bool())
+  val MemVioRedirect = Input(Bool())
   val in = Flipped(DecoupledIO(new FetchToIBuffer))
   val out = Vec(DecodeWidth, DecoupledIO(new CtrlFlow))
   val full = Output(Bool())
+  val stallReason = new StallReasonIO(DecodeWidth)
 }
 
 class IBufEntry(implicit p: Parameters) extends XSBundle {
@@ -240,6 +248,63 @@ class IBuffer(implicit p: Parameters) extends XSModule with HasCircularQueuePtrH
   }
   io.full := !allowEnq
 
+  /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  // TopDown
+  /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  val topdown_stage = RegInit(0.U.asTypeOf(new FrontendTopDownBundle))
+  topdown_stage := io.in.bits.topdown_info
+  when(io.flush) {
+    when(io.ControlRedirect) {
+      when(io.ControlBTBMissBubble) {
+        topdown_stage.reasons(TopDownCounters.BTBMissBubble.id) := true.B
+      }.elsewhen(io.TAGEMissBubble) {
+        topdown_stage.reasons(TopDownCounters.TAGEMissBubble.id) := true.B
+      }.elsewhen(io.SCMissBubble) {
+        topdown_stage.reasons(TopDownCounters.SCMissBubble.id) := true.B
+      }.elsewhen(io.ITTAGEMissBubble) {
+        topdown_stage.reasons(TopDownCounters.ITTAGEMissBubble.id) := true.B
+      }.elsewhen(io.RASMissBubble) {
+        topdown_stage.reasons(TopDownCounters.RASMissBubble.id) := true.B
+      }
+    }.elsewhen(io.MemVioRedirect) {
+      topdown_stage.reasons(TopDownCounters.MemVioRedirectBubble.id) := true.B
+    }.otherwise {
+      topdown_stage.reasons(TopDownCounters.OtherRedirectBubble.id) := true.B
+    }
+  }
+
+
+  val validVec = Mux(numValid >= DecodeWidth.U,
+    ((1 << DecodeWidth) - 1).U,
+    UIntToMask(numValid(log2Ceil(DecodeWidth) - 1, 0), DecodeWidth)
+  )
+  val dequeueInsufficient = Wire(Bool())
+  val matchBubble = Wire(UInt(log2Up(TopDownCounters.NumStallReasons.id).W))
+  val deqValidCount = PopCount(validVec.asBools)
+  val deqWasteCount = DecodeWidth.U - deqValidCount
+  dequeueInsufficient := deqValidCount < DecodeWidth.U
+  matchBubble := (TopDownCounters.NumStallReasons.id - 1).U - PriorityEncoder(topdown_stage.reasons.reverse)
+
+  io.stallReason.reason.map(_ := 0.U)
+  for (i <- 0 until DecodeWidth) {
+    when(i.U < deqWasteCount) {
+      io.stallReason.reason(DecodeWidth - i - 1) := matchBubble
+    }
+  }
+
+  when(!(deqWasteCount === DecodeWidth.U || topdown_stage.reasons.asUInt.orR)) {
+    // should set reason for FetchFragmentationStall
+    // topdown_stage.reasons(TopDownCounters.FetchFragmentationStall.id) := true.B
+    for (i <- 0 until DecodeWidth) {
+      when(i.U < deqWasteCount) {
+        io.stallReason.reason(DecodeWidth - i - 1) := TopDownCounters.FetchFragBubble.id.U
+      }
+    }
+  }
+
+  when(io.stallReason.backReason.valid) {
+    io.stallReason.reason.map(_ := io.stallReason.backReason.bits)
+  }
   //perf
   XSDebug(io.flush, "IBuffer Flushed\n")
   when(io.in.fire) {

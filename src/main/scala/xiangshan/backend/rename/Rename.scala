@@ -76,6 +76,11 @@ class Rename(implicit p: Parameters) extends XSModule  with HasCircularQueuePtrH
     val snptIsFull= Input(Bool())
     val vlUpdate = Input(Valid(UInt(log2Ceil(VLEN + 1).W)))
     val dispatchIn = Vec(RenameWidth, Input(Valid(new RobPtr)))
+    // perf only
+    val stallReason = new Bundle {
+      val in = Flipped(new StallReasonIO(RenameWidth))
+      val out = new StallReasonIO(RenameWidth)
+    }
   })
 
   // create free list and rat
@@ -173,6 +178,7 @@ class Rename(implicit p: Parameters) extends XSModule  with HasCircularQueuePtrH
   dontTouch(hasExceptionVec)
   dontTouch(needFlushPipeVec)
   val isMove = io.in.map(_.bits.ctrl.isMove)
+  private val inHeadValid = io.in.head.valid
 
   val intSpecWen = Wire(Vec(RenameWidth, Bool()))
   val fpSpecWen = Wire(Vec(RenameWidth, Bool()))
@@ -427,6 +433,43 @@ class Rename(implicit p: Parameters) extends XSModule  with HasCircularQueuePtrH
   /*
   Debug and performance counters
    */
+
+  val debugRedirect = RegEnable(io.redirect.bits, io.redirect.valid)
+  // bad speculation
+  val recStall = io.redirect.valid || io.rabCommits.isWalk
+  val ctrlRecStall = Mux(io.redirect.valid, io.redirect.bits.debugIsCtrl, io.rabCommits.isWalk && debugRedirect.debugIsCtrl)
+  val mvioRecStall = Mux(io.redirect.valid, io.redirect.bits.debugIsMemVio, io.rabCommits.isWalk && debugRedirect.debugIsMemVio)
+  val otherRecStall = recStall && !(ctrlRecStall || mvioRecStall)
+  XSPerfAccumulate("recovery_stall", recStall)
+  XSPerfAccumulate("control_recovery_stall", ctrlRecStall)
+  XSPerfAccumulate("mem_violation_recovery_stall", mvioRecStall)
+  XSPerfAccumulate("other_recovery_stall", otherRecStall)
+  // freelist stall
+  val notRecStall = !io.out.head.valid && !recStall
+  val intFlStall = notRecStall && inHeadValid && fpFreeList.io.canAllocate && !intFreeList.io.canAllocate
+  val fpFlStall = notRecStall && inHeadValid && intFreeList.io.canAllocate && !fpFreeList.io.canAllocate
+  val multiFlStall = notRecStall && inHeadValid && (PopCount(Cat(
+    !intFreeList.io.canAllocate,
+    !fpFreeList.io.canAllocate,
+  )) > 1.U)
+  // other stall
+  val otherStall = notRecStall && !intFlStall && !fpFlStall && !multiFlStall
+
+  io.stallReason.in.backReason.valid := io.stallReason.out.backReason.valid || !io.in.head.ready
+  io.stallReason.in.backReason.bits := Mux(io.stallReason.out.backReason.valid, io.stallReason.out.backReason.bits,
+    MuxCase(TopDownCounters.OtherCoreStall.id.U, Seq(
+      ctrlRecStall  -> TopDownCounters.ControlRecoveryStall.id.U,
+      mvioRecStall  -> TopDownCounters.MemVioRecoveryStall.id.U,
+      otherRecStall -> TopDownCounters.OtherRecoveryStall.id.U,
+      intFlStall    -> TopDownCounters.IntFlStall.id.U,
+      fpFlStall     -> TopDownCounters.FpFlStall.id.U,
+      multiFlStall  -> TopDownCounters.MultiFlStall.id.U,
+    )
+  ))
+  io.stallReason.out.reason.zip(io.stallReason.in.reason).zip(io.in.map(_.valid)).foreach { case ((out, in), valid) =>
+    out := Mux(io.stallReason.in.backReason.valid, io.stallReason.in.backReason.bits, in)
+  }
+  
   def printRenameInfo(in: DecoupledIO[CfCtrl], out: DecoupledIO[MicroOp]) = {
     XSInfo(out.fire, p"pc:${Hexadecimal(in.bits.cf.pc)} in(${in.valid},${in.ready}) " +
       p"lsrc(0):${in.bits.ctrl.lsrc(0)} -> psrc(0):${out.bits.psrc(0)} " +

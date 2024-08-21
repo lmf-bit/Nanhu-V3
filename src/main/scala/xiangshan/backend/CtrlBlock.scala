@@ -95,6 +95,8 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
       val lsq = new RobLsqIO
       val debug_ls = Flipped(new DebugLSIO)
       val lsTopdownInfo = Vec(exuParameters.LduCnt, Input(new LsTopdownInfo))
+      val robHeadLsIssue = Input(Bool())
+      val robDeqPtr = Output(new RobPtr)
     }
     val csrCtrl = Input(new CustomCSRCtrlIO)
     val perfInfo = Output(new Bundle{
@@ -118,6 +120,8 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
     }
     val lsqVecDeqCnt = Input(new LsqVecDeqIO)
     val vecFaultOnlyFirst = Output(ValidIO(new ExuOutput))
+    val sqCanAccept = Input(Bool())
+    val lqCanAccept = Input(Bool())
   })
   require(outer.dispatchNode.out.count(_._2._1.isIntRs) == 1)
   require(outer.dispatchNode.out.count(_._2._1.isFpRs) == 1)
@@ -202,6 +206,7 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
   //Decode
   decode.io.in      <> io.frontend.cfVec
   decode.io.csrCtrl := RegNext(io.csrCtrl)
+  decode.io.stallReason.in <> io.frontend.stallReason
 
   // memory dependency predict
   // when decode, send fold pc to mdp
@@ -363,6 +368,7 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
   rename.io.snpt.flushVec := flushVecNext
   rename.io.snptLastEnq.valid := !isEmpty(snpt.io.enqPtr, snpt.io.deqPtr)
   rename.io.snptLastEnq.bits := snpt.io.snapshots((snpt.io.enqPtr - 1.U).value).robIdx.head
+  rename.io.stallReason.in <> decode.io.stallReason.out
 
   rob.io.snpt.snptEnq := DontCare
   rob.io.snpt.snptDeq := snpt.io.deq
@@ -447,6 +453,14 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
   dispatch.io.allocPregs <> io.allocPregs
 //  dispatch.io.singleStep := RegNext(io.csrCtrl.singlestep)
   dispatch.io.vstart := RegNext(io.vstart)
+  dispatch.io.robHead := rob.io.debugRobHead
+  dispatch.io.stallReason <> rename.io.stallReason.out
+  dispatch.io.debugTopDown.fromRob := rob.io.debugTopDown.toDispatch
+  dispatch.io.debugTopDown.fromCore := io.debugTopDown.fromCore
+  dispatch.io.lqCanAccept := io.lqCanAccept
+  dispatch.io.sqCanAccept := io.sqCanAccept
+  dispatch.io.robHeadNotReady := rob.io.headNotReady
+  dispatch.io.robFull := rob.io.robFull
 
   private val redirectDelay_dup_0 = Pipe(io.redirectIn)
   private val redirectDelay_dup_3 = Pipe(io.redirectIn)
@@ -515,7 +529,13 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
   io.robio.lsq <> rob.io.lsq
   rob.io.debug_ls := io.robio.debug_ls
   rob.io.lsTopdownInfo := io.robio.lsTopdownInfo
+  rob.io.debugHeadLsIssue := io.robio.robHeadLsIssue
+  rob.io.debugEnqLsq.canAccept := io.enqLsq.canAccept
+  rob.io.debugEnqLsq.resp := io.enqLsq.resp
+  rob.io.debugEnqLsq.req := io.enqLsq.req
+  rob.io.debugEnqLsq.needAlloc := io.enqLsq.needAlloc
   io.debugTopDown.fromRob := rob.io.debugTopDown.toCore
+  io.robio.robDeqPtr := rob.io.robDeqPtr
 
   // performance counter
   if (env.EnableTopDown) {

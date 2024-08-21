@@ -76,7 +76,9 @@ class CfiUpdateInfo(implicit p: Parameters) extends XSBundle with HasBPUParamete
   val histPtr = new CGHPtr
   val specCnt = Vec(numBr, UInt(10.W))
   // need pipeline update
-  val br_hit = Bool()
+  val br_hit = Bool() // if in ftb entry
+  val jr_hit = Bool() // if in ftb entry
+  val sc_hit = Bool() // if used in ftb entry, invalid if !br_hit
   val predTaken = Bool()
   val target = UInt(VAddrBits.W)
   val taken = Bool()
@@ -279,6 +281,10 @@ class Redirect(implicit p: Parameters) extends XSBundle {
   val stFtqIdx = new FtqPtr // for load violation predict
   val stFtqOffset = UInt(log2Up(PredictWidth).W)
 
+  // val debug_runahead_checkpoint_id = UInt(64.W)
+  val debugIsCtrl = Bool()
+  val debugIsMemVio = Bool()
+
   // def isUnconditional() = RedirectLevel.isUnconditional(level)
   def flushItself() = RedirectLevel.flushItself(level)
   // def isException() = RedirectLevel.isException(level)
@@ -461,6 +467,7 @@ class FrontendToCtrlIO(implicit p: Parameters) extends XSBundle {
   // to backend end
   val cfVec = Vec(DecodeWidth, DecoupledIO(new CtrlFlow))
   val fromFtq = new FtqToCtrlIO
+  val stallReason = new StallReasonIO(DecodeWidth)
   // from backend
   val toFtq = Flipped(new CtrlToFtqIO)
 }
@@ -745,5 +752,10 @@ class MatchTriggerIO(implicit p: Parameters) extends XSBundle {
   val store = Output(Bool())
   val load = Output(Bool())
   val tdata2 = Output(UInt(64.W))
+}
+
+class StallReasonIO(width: Int) extends Bundle {
+  val reason = Output(Vec(width, UInt(log2Ceil(TopDownCounters.NumStallReasons.id).W)))
+  val backReason = Flipped(Valid(UInt(log2Ceil(TopDownCounters.NumStallReasons.id).W)))
 }
 

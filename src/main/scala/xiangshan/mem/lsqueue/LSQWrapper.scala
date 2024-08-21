@@ -109,6 +109,8 @@ class LsqWrappper(implicit p: Parameters) extends XSModule with HasDCacheParamet
     val lduqueryAndUpdate = Vec(LoadPipelineWidth, Flipped(ValidIO(new LoadQueueDataUpdateBundle))) //from loadUnit S2
     // top-down
     val debugTopDown = new LoadQueueTopDownIO
+    val lqCanAccept = Output(Bool())
+    val sqCanAccept = Output(Bool())
   })
 
   dontTouch(io.tlb_hint)
@@ -121,6 +123,8 @@ class LsqWrappper(implicit p: Parameters) extends XSModule with HasDCacheParamet
   // LSQ: send out canAccept when both load queue and store queue are ready
   // Dispatch: send instructions to LSQ only when they are ready
   io.enq.canAccept := loadQueue.io.enq.canAccept && storeQueue.io.enq.canAccept
+  io.lqCanAccept := loadQueue.io.enq.canAccept
+  io.sqCanAccept := storeQueue.io.enq.canAccept
   loadQueue.io.enq.sqCanAccept := storeQueue.io.enq.canAccept
   storeQueue.io.enq.lqCanAccept := loadQueue.io.enq.canAccept
   loadQueue.io.stAddrReadyPtr := storeQueue.io.stPtrInfo.stAddrReadyPtr

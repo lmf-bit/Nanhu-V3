@@ -279,6 +279,8 @@ class MemBlockImp(outer: MemBlock) extends BasicExuBlockImp(outer)
     val lsqio = new Bundle {
       val exceptionAddr = new ExceptionAddrIO // to csr
       val rob = Flipped(new RobLsqIO) // rob to lsq
+      val lqCanAccept = Output(Bool())
+      val sqCanAccept = Output(Bool())
     }
     val csrCtrl = Flipped(new CustomCSRCtrlIO)
     val csrUpdate = new DistributedCSRUpdateReq
@@ -314,6 +316,7 @@ class MemBlockImp(outer: MemBlock) extends BasicExuBlockImp(outer)
       val toCore = new MemCoreTopDownIO
       val lsTopdownInfo = Vec(exuParameters.LduCnt, Output(new LsTopdownInfo))
     }
+    def issueUops = lduIssues ++ staIssues ++ stdIssues
   })
   io.lsqVecDeqCnt := DontCare
 
@@ -853,6 +856,8 @@ class MemBlockImp(outer: MemBlock) extends BasicExuBlockImp(outer)
   }
 
   // Lsq
+  io.lsqio.lqCanAccept := lsq.io.lqCanAccept
+  io.lsqio.sqCanAccept := lsq.io.sqCanAccept
   lsq.io.rob            <> io.lsqio.rob
   lsq.io.enq            <> io.enqLsq
   lsq.io.brqRedirect    <> Pipe(redirectIn)
