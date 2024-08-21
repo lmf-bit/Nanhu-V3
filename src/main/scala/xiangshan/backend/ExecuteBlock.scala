@@ -49,6 +49,7 @@ import xiangshan.mem._
 import xiangshan.backend.ctrlblock.DebugLSIO
 import xiangshan.backend.execute.exublock.MemCoreTopDownIO
 import xiangshan.backend.ctrlblock.LsTopdownInfo
+import xiangshan.backend.rob.RobPtr
 class ExecuteBlock(val parentName:String = "Unknown")(implicit p:Parameters) extends LazyModule with HasXSParameter with HasVectorParameters {
   val integerReservationStation: IntegerReservationStation = LazyModule(new IntegerReservationStation)
   val floatingReservationStation: FloatingReservationStation = LazyModule(new FloatingReservationStation)
@@ -147,9 +148,11 @@ class ExecuteBlockImp(outer:ExecuteBlock) extends LazyModuleImp(outer)
     //top-down
     val debug_ls = new DebugLSIO
     val debugTopDown = new Bundle{
+      val robDeqPtr = Input(new RobPtr)
       val robHeadVaddr = Flipped(Valid(UInt(VAddrBits.W)))
       val toCore = new MemCoreTopDownIO
       val lsTopdownInfo = Vec(exuParameters.LduCnt, Output(new LsTopdownInfo))
+      val robHeadLsIssue = Output(Bool())
     }
     val lqCanAccept = Output(Bool())
     val sqCanAccept = Output(Bool())
@@ -251,6 +254,7 @@ class ExecuteBlockImp(outer:ExecuteBlock) extends LazyModuleImp(outer)
   memBlk.io.tlbCsr <> intBlk.io.csrio.tlb
   memBlk.io.hartId := io.hartId
   memBlk.io.l2_hint := io.l2_hint
+  
   io.lqDeq := RegNext(memBlk.io.lqDeq)
 
   io.lsqVecDeqCnt <> memBlk.io.lsqVecDeqCnt

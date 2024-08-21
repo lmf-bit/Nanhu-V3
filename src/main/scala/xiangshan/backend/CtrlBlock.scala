@@ -51,7 +51,7 @@ class CtrlToFtqIO(implicit p: Parameters) extends XSBundle {
   val redirectAhead = Valid(new Redirect)
 }
 class CoreDispatchTopDownIO extends Bundle {
-  // val l2MissMatch = Input(Bool())
+  val l2MissMatch = Input(Bool())
   // val l3MissMatch = Input(Bool())
   val fromMem = Flipped(new MemCoreTopDownIO)
 }
@@ -94,8 +94,8 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
       // to mem block
       val lsq = new RobLsqIO
       val debug_ls = Flipped(new DebugLSIO)
-      val lsTopdownInfo = Vec(exuParameters.LduCnt, Input(new LsTopdownInfo))
       val robHeadLsIssue = Input(Bool())
+      val lsTopdownInfo = Vec(exuParameters.LduCnt, Input(new LsTopdownInfo))
       val robDeqPtr = Output(new RobPtr)
     }
     val csrCtrl = Input(new CustomCSRCtrlIO)
@@ -530,12 +530,12 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
   rob.io.debug_ls := io.robio.debug_ls
   rob.io.lsTopdownInfo := io.robio.lsTopdownInfo
   rob.io.debugHeadLsIssue := io.robio.robHeadLsIssue
+  io.robio.robDeqPtr := rob.io.robDeqPtr
   rob.io.debugEnqLsq.canAccept := io.enqLsq.canAccept
   rob.io.debugEnqLsq.resp := io.enqLsq.resp
   rob.io.debugEnqLsq.req := io.enqLsq.req
   rob.io.debugEnqLsq.needAlloc := io.enqLsq.needAlloc
   io.debugTopDown.fromRob := rob.io.debugTopDown.toCore
-  io.robio.robDeqPtr := rob.io.robDeqPtr
 
   // performance counter
   if (env.EnableTopDown) {
