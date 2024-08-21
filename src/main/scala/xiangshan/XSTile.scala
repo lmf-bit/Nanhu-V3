@@ -121,7 +121,7 @@ class XSTile(val parentName:String = "Unknown")(implicit p: Parameters) extends 
   }
 
   val l1d_to_l2_bufferOpt = coreParams.dcacheParametersOpt.map { _ =>
-    val (buffers, buf_node) = chainBuffer(2, "l1d_to_l2_buffer")
+    val (buffers, buf_node) = chainBuffer(1, "l1d_to_l2_buffer")
     misc.l1d_logger := buf_node := core.exuBlock.memoryBlock.dcache.clientNode
     buffers
   }
