@@ -84,7 +84,6 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
     val rabCommits = Output(new RabCommitIO)
     val diffCommits = if (env.EnableDifftest || env.AlwaysBasicDiff) Some(Output(new DiffCommitIO)) else None
     val lsq = new RobLsqIO
-    val robDeqPtr = Output(new RobPtr)
     val csr = new RobCSRIO
     val snpt = Input(new SnapshotPort)
     val robFull = Output(Bool())
@@ -220,8 +219,6 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
   val s_idle :: s_walk :: s_extrawalk :: Nil = Enum(3)
   val state = RegInit(s_idle)
 
-  val debug_lsIssue = WireDefault(debug_lsIssued)
-  debug_lsIssue(deqPtr.value) := io.debugHeadLsIssue
   io.debugRobHead := debug_microOp(deqPtr.value)
   io.robDeqPtr := deqPtr
   /**
@@ -329,11 +326,6 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
       debug_microOp(req.bits.robIdx.value).lqIdx := req.bits.lqIdx
       debug_lqIdxValid(req.bits.robIdx.value) := true.B
     }
-  }
-
-  // lsIssue
-  when(io.debugHeadLsIssue) {
-    debug_lsIssued(deqPtr.value) := true.B
   }
 
   /**
