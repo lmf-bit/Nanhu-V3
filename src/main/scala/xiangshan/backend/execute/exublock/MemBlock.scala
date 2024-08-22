@@ -980,7 +980,7 @@ class MemBlockImp(outer: MemBlock) extends BasicExuBlockImp(outer)
   io.debugTopDown.toCore.robHeadTlbMiss := lsq.io.debugTopDown.robHeadTlbMiss
   io.debugTopDown.toCore.robHeadLoadVio := lsq.io.debugTopDown.robHeadLoadVio
   io.debugTopDown.toCore.robHeadLoadMSHR := lsq.io.debugTopDown.robHeadLoadMSHR
-  io.debugTopDown.robHeadLsIssue := loadUnits.map(ldu => ldu.rsIssueIn.fire && ldu.rsIssueIn.bits.uop.robIdx === io.debugTopDown.robDeqPtr).reduce(_ || _)
+  io.debugTopDown.robHeadLsIssue := (stdUnits.map(_.io.in) ++ storeUnits.map(_.io.stin) ++ loadUnits.map(_.rsIssueIn)).map(iss => iss.fire && iss.bits.uop.robIdx === io.debugTopDown.robDeqPtr).reduce(_||_)
   dcache.io.debugTopDown.robHeadOtherReplay := lsq.io.debugTopDown.robHeadOtherReplay
   
   val ldDeqCount = PopCount(lduIssues.map(_.issue.valid))
