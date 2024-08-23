@@ -1180,7 +1180,7 @@ class RobImp(outer: Rob)(implicit p: Parameters) extends LazyModuleImp(outer)
   }
 
   // top-down connection
-  io.robDeqPtr := deqPtr
+  // io.robDeqPtr := deqPtr
   // io.debugRobHead := debug_microOp(deqPtr.value)
   val debug_lsIssue = WireDefault(debug_lsIssued)
   debug_lsIssue(deqPtr.value) := io.debugHeadLsIssue
