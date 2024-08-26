@@ -446,14 +446,14 @@ class Rename(implicit p: Parameters) extends XSModule  with HasCircularQueuePtrH
   XSPerfAccumulate("other_recovery_stall", otherRecStall)
   // freelist stall
   val notRecStall = !io.out.head.valid && !recStall
-  val intFlStall = notRecStall && inHeadValid && fpFreeList.io.canAllocate && !intFreeList.io.canAllocate
-  val fpFlStall = notRecStall && inHeadValid && intFreeList.io.canAllocate && !fpFreeList.io.canAllocate
-  val multiFlStall = notRecStall && inHeadValid && (PopCount(Cat(
+  val intFlStall = notRecStall && inHeadValid && fpFreeList.io.canAllocate && !intFreeList.io.canAllocate && io.enqRob.canAccept
+  val fpFlStall = notRecStall && inHeadValid && intFreeList.io.canAllocate && !fpFreeList.io.canAllocate && io.enqRob.canAccept
+  val multiFlStall = notRecStall && inHeadValid && io.enqRob.canAccept && (PopCount(Cat(
     !intFreeList.io.canAllocate,
     !fpFreeList.io.canAllocate,
   )) > 1.U)
   // other stall
-  val otherStall = notRecStall && !intFlStall && !fpFlStall && !multiFlStall
+  val otherStall = notRecStall && !intFlStall && !fpFlStall && !multiFlStall && io.enqRob.canAccept
 
   io.stallReason.in.backReason.valid := io.stallReason.out.backReason.valid || !io.in.head.ready
   io.stallReason.in.backReason.bits := Mux(io.stallReason.out.backReason.valid, io.stallReason.out.backReason.bits,
