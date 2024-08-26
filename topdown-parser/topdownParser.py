@@ -4,6 +4,9 @@ import argparse
 import json
 import matplotlib.pyplot as plt
 import numpy as np
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="SPEC06 Result Analysis")
@@ -12,6 +15,7 @@ def parse_arguments():
     parser.add_argument('-c', '--cov_json', help="Specify the absolute path of the JSON file used to process SPEC06 subfolders (Default: 'simpoint_coverage0.3_test.json')")
     parser.add_argument('-s', '--search', help="Specify the name of the filter counter")
     return parser.parse_args()
+
 
 def parse_cov_json(designated_json):
     if designated_json:
@@ -25,6 +29,7 @@ def parse_cov_json(designated_json):
             return path
     return None
 
+
 def generate_folder_names(json_file_path):
     with open(json_file_path, 'r') as file:
         data = json.load(file)
@@ -35,21 +40,33 @@ def generate_folder_names(json_file_path):
             folder_names.append(folder_name)
     return folder_names
 
+
 def extract_result(work_directory, folder_names):
     raw_data = {}
     success_list = []
     failure_list = []
-    for entry in sorted(os.listdir(work_directory)):
+    # Define a function to process each subfolder
+    def process_folder(entry):
         subfolder_path = os.path.join(work_directory, entry)
         if os.path.isdir(subfolder_path):
             if entry in folder_names:
                 simulator_err_path = os.path.join(subfolder_path, 'simulator_err.txt')
                 if os.path.exists(simulator_err_path):
                     with open(simulator_err_path, 'r') as file:
-                        raw_data[entry] = file.read()
-                    success_list.append(entry)
+                        return entry, file.read(), True
                 else:
-                    failure_list.append(entry)
+                    return entry, None, False
+        return None, None, False
+    # Use ThreadPoolExecutor to parallelize folder processing
+    with ThreadPoolExecutor() as executor:
+        futures = {executor.submit(process_folder, entry): entry for entry in sorted(os.listdir(work_directory))}
+        for future in as_completed(futures):
+            entry, data, success = future.result()
+            if success:
+                raw_data[entry] = data
+                success_list.append(entry)
+            else:
+                failure_list.append(entry)
     if success_list:
         print("Already read data in sub-folder:")
         for folder in success_list:
@@ -58,22 +75,18 @@ def extract_result(work_directory, folder_names):
         print("Can't find simulator_err in sub-folder:")
         for folder in failure_list:
             print(f" \t {folder}")
-            print("It may because Json file and SPEC06 result not match ?")
+        print("It may be because Json file and SPEC06 result do not match ?")
+
     return raw_data
 
+
 def process_data(raw_data):
-    processed_data = {}
-    for folder_name, data in raw_data.items():
-        # split lines
+    def process_folder_data(folder_name, data):
+        processed_lines = []
         lines = data.strip().split("\n")
-        # strip warmup data
         total_lines = len(lines)
         half_lines = total_lines // 2
         relevant_lines = lines[half_lines:]
-        
-        # prepare storage for processed lines
-        processed_lines = []
-        
         for line in relevant_lines:
             parts = line.split("]", 2)
             if len(parts) < 3:
@@ -86,12 +99,20 @@ def process_data(raw_data):
                 'name': name.strip(),
                 'count': count.strip()
             })
-        
-        processed_data[folder_name] = processed_lines
-    
+        return folder_name, processed_lines
+
+    processed_data = {}
+    # Use ThreadPoolExecutor to parallelize the data processing
+    with ThreadPoolExecutor() as executor:
+        futures = {executor.submit(process_folder_data, folder_name, data): folder_name for folder_name, data in raw_data.items()}
+        for future in as_completed(futures):
+            folder_name, processed_lines = future.result()
+            processed_data[folder_name] = processed_lines
+
     return processed_data
 
 def main():
+    start_time = time.time() 
     # set NOOP_HOME as Nanhu-v3 directory
     noop_home = os.getenv('NOOP_HOME')
     if noop_home is None:
@@ -212,5 +233,9 @@ def main():
     plt.tight_layout()
     plt.savefig('topdown_level1.png')
 
+    # calculate execute time
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    print(f"Program executed in {elapsed_time:.2f} seconds")
 if __name__ == "__main__":
     main()
