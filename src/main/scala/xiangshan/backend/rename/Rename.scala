@@ -81,6 +81,8 @@ class Rename(implicit p: Parameters) extends XSModule  with HasCircularQueuePtrH
       val in = Flipped(new StallReasonIO(RenameWidth))
       val out = new StallReasonIO(RenameWidth)
     }
+    val intFlCanAccept = Output(Bool())
+    val fpFlCanAccept = Output(Bool())
   })
 
   // create free list and rat
@@ -118,6 +120,8 @@ class Rename(implicit p: Parameters) extends XSModule  with HasCircularQueuePtrH
   // dispatch1 ready ++ float point free list ready ++ int free list ready ++ not walk ++ rob canaccept
   val canOut = io.out(0).ready && fpFreeList.io.canAllocate && intFreeList.io.canAllocate && !io.rabCommits.isWalk && !io.robCommits.isWalk && vtyperename.io.canAccept && io.enqRob.canAccept
 
+  io.intFlCanAccept := intFreeList.io.canAllocate
+  io.fpFlCanAccept := fpFreeList.io.canAllocate
   // compressUnit: decode instructions guidelines to the ROB allocation logic
   val compressUnit = Module(new CompressUnit())
     compressUnit.io.in.zip(io.in).foreach{ case(sink, source) =>

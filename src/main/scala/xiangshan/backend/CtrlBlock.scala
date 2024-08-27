@@ -637,6 +637,32 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
   XSPerfAccumulate("Topdown_Stall", frontendStall + backendStall + bidirectStall)
   XSPerfAccumulate("Topdown_Op_spec", opSpec)
 
+  val AllDqCanAccept = intDq.io.enq.canAccept && fpDq.io.enq.canAccept && lsDq.io.enq.canAccept
+  val AllFlCanAccept = rename.io.intFlCanAccept && rename.io.fpFlCanAccept
+
+  val backendRobStall = PopCount( (rename.io.in map { ren =>  (ren.valid || CommitType.isFused(ren.bits.ctrl.commitType)) && !ren.ready && !rename.io.enqRob.canAccept && AllDqCanAccept && AllFlCanAccept && !rename.io.rabCommits.isWalk }) )
+  val backendWalkStall = PopCount( (rename.io.in map { ren =>  (ren.valid || CommitType.isFused(ren.bits.ctrl.commitType)) && !ren.ready && rename.io.enqRob.canAccept && AllDqCanAccept && AllFlCanAccept && rename.io.rabCommits.isWalk }) )
+  val backendIntFlStall = PopCount( (rename.io.in map { ren =>  (ren.valid || CommitType.isFused(ren.bits.ctrl.commitType)) && !ren.ready && rename.io.enqRob.canAccept && AllDqCanAccept && !rename.io.intFlCanAccept && rename.io.intFlCanAccept && !rename.io.rabCommits.isWalk})  )
+  val backendFpFlStall = PopCount( (rename.io.in map { ren =>  (ren.valid || CommitType.isFused(ren.bits.ctrl.commitType)) && !ren.ready && rename.io.enqRob.canAccept && AllDqCanAccept && rename.io.intFlCanAccept && !rename.io.intFlCanAccept && !rename.io.rabCommits.isWalk})  )
+  val backendIntDqStall = PopCount( (rename.io.in map { ren =>  (ren.valid || CommitType.isFused(ren.bits.ctrl.commitType)) && !ren.ready && rename.io.enqRob.canAccept && !intDq.io.enq.canAccept && fpDq.io.enq.canAccept && lsDq.io.enq.canAccept && AllFlCanAccept && !rename.io.rabCommits.isWalk})  )
+  val backendFpDqStall = PopCount( (rename.io.in map { ren =>  (ren.valid || CommitType.isFused(ren.bits.ctrl.commitType)) && !ren.ready && rename.io.enqRob.canAccept && intDq.io.enq.canAccept && !fpDq.io.enq.canAccept && lsDq.io.enq.canAccept && AllFlCanAccept && !rename.io.rabCommits.isWalk})  )
+  val backendLsDqStall = PopCount( (rename.io.in map { ren =>  (ren.valid || CommitType.isFused(ren.bits.ctrl.commitType)) && !ren.ready && rename.io.enqRob.canAccept && intDq.io.enq.canAccept && fpDq.io.enq.canAccept && !lsDq.io.enq.canAccept && AllFlCanAccept && !rename.io.rabCommits.isWalk})  )
+  val backendFlAndRobStall = PopCount( (rename.io.in map { ren =>  (ren.valid || CommitType.isFused(ren.bits.ctrl.commitType)) && !ren.ready && !rename.io.enqRob.canAccept && AllDqCanAccept && !AllFlCanAccept && !rename.io.rabCommits.isWalk})  )
+  val backendRobAndDqStall = PopCount( (rename.io.in map { ren =>  (ren.valid || CommitType.isFused(ren.bits.ctrl.commitType)) && !ren.ready && !rename.io.enqRob.canAccept && !AllDqCanAccept && AllFlCanAccept && !rename.io.rabCommits.isWalk})  )
+  val backendDqAndFlStall = PopCount( (rename.io.in map { ren =>  (ren.valid || CommitType.isFused(ren.bits.ctrl.commitType)) && !ren.ready && !rename.io.enqRob.canAccept && AllDqCanAccept && !AllFlCanAccept && !rename.io.rabCommits.isWalk})  )
+
+  XSPerfAccumulate("TopdownL2Backend_Stall", backendRobStall + backendWalkStall + backendIntFlStall + backendFpFlStall + backendIntDqStall + backendFpDqStall + backendLsDqStall)
+  XSPerfAccumulate("TopdownL2Backend_RobStall", backendRobStall)
+  XSPerfAccumulate("TopdownL2Backend_WalkStall", backendWalkStall)
+  XSPerfAccumulate("TopdownL2Backend_IntFlStall", backendIntFlStall)
+  XSPerfAccumulate("TopdownL2Backend_FpFlStall", backendFpFlStall)
+  XSPerfAccumulate("TopdownL2Backend_IntDqStall", backendIntDqStall)
+  XSPerfAccumulate("TopdownL2Backend_FpDqStall", backendFpDqStall)
+  XSPerfAccumulate("TopdownL2Backend_LsDqStall", backendLsDqStall)
+  XSPerfAccumulate("TopdownL2Backend_FlAndRobStall", backendFlAndRobStall)
+  XSPerfAccumulate("TopdownL2Backend_RobAndDqStall", backendRobAndDqStall)
+  XSPerfAccumulate("TopdownL2Backend_DqAndFlStall", backendDqAndFlStall)
+
   private val allPerfInc = allPerfEvents.map(_._2.asTypeOf(new PerfEvent))
   val perfEvents = HPerfMonitor(csrevents, allPerfInc).getPerfEvents
   generatePerfEvent()
