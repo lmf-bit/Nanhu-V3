@@ -650,8 +650,11 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
   val backendFlAndRobStall = PopCount( (rename.io.in map { ren =>  (ren.valid || CommitType.isFused(ren.bits.ctrl.commitType)) && !ren.ready && !rename.io.enqRob.canAccept && AllDqCanAccept && !AllFlCanAccept && !rename.io.rabCommits.isWalk})  )
   val backendRobAndDqStall = PopCount( (rename.io.in map { ren =>  (ren.valid || CommitType.isFused(ren.bits.ctrl.commitType)) && !ren.ready && !rename.io.enqRob.canAccept && !AllDqCanAccept && AllFlCanAccept && !rename.io.rabCommits.isWalk})  )
   val backendDqAndFlStall = PopCount( (rename.io.in map { ren =>  (ren.valid || CommitType.isFused(ren.bits.ctrl.commitType)) && !ren.ready && !rename.io.enqRob.canAccept && AllDqCanAccept && !AllFlCanAccept && !rename.io.rabCommits.isWalk})  )
-
-  XSPerfAccumulate("TopdownL2Backend_Stall", backendRobStall + backendWalkStall + backendIntFlStall + backendFpFlStall + backendIntDqStall + backendFpDqStall + backendLsDqStall)
+  val backendRobAndintDqStall = PopCount( (rename.io.in map { ren =>  (ren.valid || CommitType.isFused(ren.bits.ctrl.commitType)) && !ren.ready && !rename.io.enqRob.canAccept && !intDq.io.enq.canAccept && fpDq.io.enq.canAccept && lsDq.io.enq.canAccept && AllFlCanAccept && !rename.io.rabCommits.isWalk})  )
+  val backendRobAndlsDqStall = PopCount( (rename.io.in map { ren =>  (ren.valid || CommitType.isFused(ren.bits.ctrl.commitType)) && !ren.ready && !rename.io.enqRob.canAccept && intDq.io.enq.canAccept && fpDq.io.enq.canAccept && !lsDq.io.enq.canAccept && AllFlCanAccept && !rename.io.rabCommits.isWalk})  )
+  val backendRobAndintlsDqStall = PopCount( (rename.io.in map { ren =>  (ren.valid || CommitType.isFused(ren.bits.ctrl.commitType)) && !ren.ready && !rename.io.enqRob.canAccept && !intDq.io.enq.canAccept && fpDq.io.enq.canAccept && !lsDq.io.enq.canAccept && AllFlCanAccept && !rename.io.rabCommits.isWalk})  )
+  val backendintAndlsDqStall = PopCount( (rename.io.in map { ren =>  (ren.valid || CommitType.isFused(ren.bits.ctrl.commitType)) && !ren.ready && rename.io.enqRob.canAccept && !intDq.io.enq.canAccept && fpDq.io.enq.canAccept && !lsDq.io.enq.canAccept && AllFlCanAccept && !rename.io.rabCommits.isWalk})  )
+  XSPerfAccumulate("TopdownL2Backend_Stall", backendRobStall + backendWalkStall + backendIntFlStall + backendFpFlStall + backendIntDqStall + backendFpDqStall + backendLsDqStall + backendFlAndRobStall + backendRobAndDqStall + backendDqAndFlStall + backendintAndlsDqStall + backendRobAndintDqStall + backendRobAndlsDqStall + backendRobAndintlsDqStall)
   XSPerfAccumulate("TopdownL2Backend_RobStall", backendRobStall)
   XSPerfAccumulate("TopdownL2Backend_WalkStall", backendWalkStall)
   XSPerfAccumulate("TopdownL2Backend_IntFlStall", backendIntFlStall)
@@ -662,6 +665,10 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
   XSPerfAccumulate("TopdownL2Backend_FlAndRobStall", backendFlAndRobStall)
   XSPerfAccumulate("TopdownL2Backend_RobAndDqStall", backendRobAndDqStall)
   XSPerfAccumulate("TopdownL2Backend_DqAndFlStall", backendDqAndFlStall)
+  XSPerfAccumulate("TopdownL2Backend_intAndlsDqStall", backendintAndlsDqStall)
+  XSPerfAccumulate("TopdownL2Backend_robAndintDqStall", backendRobAndintDqStall)
+  XSPerfAccumulate("TopdownL2Backend_robAndlsDqStall", backendRobAndlsDqStall)
+  XSPerfAccumulate("TopdownL2Backend_robAndintlsDqStall", backendRobAndintlsDqStall)
 
   private val allPerfInc = allPerfEvents.map(_._2.asTypeOf(new PerfEvent))
   val perfEvents = HPerfMonitor(csrevents, allPerfInc).getPerfEvents
