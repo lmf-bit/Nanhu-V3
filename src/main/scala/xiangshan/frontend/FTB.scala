@@ -359,6 +359,11 @@ class FTB(implicit p: Parameters) extends BasePredictor with FTBParams with BPUU
     FTBMeta(writeWay.asUInt, s1_ftbHit, s1_uftbHitDup(dupForFtb), GTimer()).asUInt,
     io.s1_fire(dupForFtb)), io.s2_fire(dupForFtb))
 
+  io.out.s1_uftbHit := io.fauftb_entry_hit_in
+  val s1_uftbHasIndirect = io.fauftb_entry_in.jmpValid &&
+     io.fauftb_entry_in.isJalr && !io.fauftb_entry_in.isRet // uFTB determines that it's real JALR, RET and JAL are excluded
+  io.out.s1_uftbHasIndirect := s1_uftbHasIndirect
+
   // always taken logic
   for (out_fp & in_fp & s2_hit & s2_ftb_entry <-
     io.out.s2.fullPred zip io.in.bits.resp_in(0).s2.fullPred zip s2_ftbHitDup zip s2_ftbEntryDup)
