@@ -35,6 +35,10 @@ class DecodeStage(implicit p: Parameters) extends XSModule with HasPerfEvents wi
     val csrCtrl = Input(new CustomCSRCtrlIO)
     // perf only
     val fusion = Vec(DecodeWidth - 1, Input(Bool()))
+    val stallReason = new Bundle {
+      val in = Flipped(new StallReasonIO(DecodeWidth))
+      val out = new StallReasonIO(DecodeWidth)
+    }
   })
 
   val decoders = Seq.fill(DecodeWidth)(Module(new DecodeUnit))
@@ -51,6 +55,13 @@ class DecodeStage(implicit p: Parameters) extends XSModule with HasPerfEvents wi
 
   }
 
+  io.stallReason.in.backReason := io.stallReason.out.backReason
+  io.stallReason.out.reason.zip(io.stallReason.in.reason).zip(io.in.map(_.valid)).foreach { case ((out, in), valid) =>
+    out := Mux(io.stallReason.out.backReason.valid,
+               io.stallReason.out.backReason.bits,
+               in)
+  }
+  
   val hasValid = VecInit(io.in.map(_.valid)).asUInt.orR
   XSPerfAccumulate("utilization", PopCount(io.in.map(_.valid)))
   XSPerfAccumulate("waitInstr", PopCount((0 until DecodeWidth).map(i => io.in(i).valid && !io.in(i).ready)))

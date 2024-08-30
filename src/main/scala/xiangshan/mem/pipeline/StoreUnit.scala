@@ -28,6 +28,7 @@ import xiangshan.backend.execute.fu._
 import xiangshan.backend.issue.{RSFeedback, RSFeedbackType, RsIdx}
 import xiangshan.cache.mmu.{TlbCmd, TlbReq, TlbRequestIO, TlbResp}
 import xs.utils.perf.HasPerfLogging
+import xiangshan.backend.ctrlblock.DebugLsInfoBundle
 
 class StoreUnit(implicit p: Parameters) extends XSModule with HasPerfLogging {
   val io = IO(new Bundle() {
@@ -48,6 +49,8 @@ class StoreUnit(implicit p: Parameters) extends XSModule with HasPerfLogging {
     val fdiReq = ValidIO(new FDIReqBundle())
     val fdiResp = Flipped(new FDIRespBundle())
     val storeViolationQuery = ValidIO(new storeRAWQueryBundle)
+    // debug
+    val debug_ls = Output(new DebugLsInfoBundle)
   })
   io.tlb := DontCare
   val s0_in = io.stin
@@ -201,6 +204,10 @@ class StoreUnit(implicit p: Parameters) extends XSModule with HasPerfLogging {
   s3_out.bits.fflags := DontCare
 
   io.stout <> s3_out
+
+  io.debug_ls := DontCare
+  io.debug_ls.s1_robIdx := s1_in.bits.uop.robIdx.value
+  io.debug_ls.s1_isTlbFirstMiss := io.tlb.resp.valid && io.tlb.resp.bits.miss
 
   PipelineConnect(s2_out, s3_in, true.B, s2_out.bits.uop.robIdx.needFlush(io.redirect_dup(2)))
   private def printPipeLine(pipeline: LsPipelineBundle, cond: Bool, name: String): Unit = {

@@ -185,7 +185,7 @@ trait HasDCacheParameters extends HasL1CacheParameters {
     require(data.getWidth >= (bank+1)*DCacheSRAMRowBytes)
     data(DCacheSRAMRowBytes * (bank + 1) - 1, DCacheSRAMRowBytes * bank)
   }
-  
+
   def is_alias_match(vaddr0: UInt, vaddr1: UInt): Bool = {
     require(vaddr0.getWidth == VAddrBits && vaddr1.getWidth == VAddrBits)
     if (blockOffBits + idxBits > pgIdxBits) {
@@ -474,6 +474,11 @@ class DCacheToLsuIO(implicit p: Parameters) extends DCacheBundle {
   val lduForwardMSHR = Flipped(Vec(LoadPipelineWidth ,new LduForwardFromMSHR))
 }
 
+class DCacheTopDownIO(implicit p: Parameters) extends DCacheBundle {
+  val robHeadVaddr = Flipped(Valid(UInt(VAddrBits.W)))
+  val robHeadMissInDCache = Output(Bool())
+  val robHeadOtherReplay = Input(Bool())
+}
 class DCacheIO(implicit p: Parameters) extends DCacheBundle {
   val hartId = Input(UInt(8.W))
   val l2_pf_store_only = Input(Bool())
@@ -484,6 +489,7 @@ class DCacheIO(implicit p: Parameters) extends DCacheBundle {
   val pf_req = Flipped(DecoupledIO(new L1PrefetchReq()))
   val l2_hint = Input(new DCacheTLDBypassLduIO)
   val lqEmpty = Input(Bool())
+  val debugTopDown = new DCacheTopDownIO
 }
 
 
@@ -562,7 +568,7 @@ class DCacheImp(outer: DCache) extends LazyModuleImp(outer) with HasDCacheParame
   missQueue.io.hartId := io.hartId
   missQueue.io.l2_pf_store_only := RegNext(io.l2_pf_store_only, false.B)
   missQueue.io.lqEmpty := io.lqEmpty
-
+  missQueue.io.debugTopDown <> io.debugTopDown
   val errors = ldu.map(_.io.error) ++ // load error
     Seq(mainPipe.io.error) // store / misc error
   io.error <> RegNext(Mux1H(errors.map(e => RegNext(e.valid) -> RegNext(e))))
@@ -674,7 +680,7 @@ class DCacheImp(outer: DCache) extends LazyModuleImp(outer) with HasDCacheParame
   bankedDataArray.io.readline <> mainPipe.io.data_read
   bankedDataArray.io.readline_intend := mainPipe.io.data_read_intend
   mainPipe.io.readline_error_delayed := bankedDataArray.io.readline_error_delayed
-  mainPipe.io.data_resp := bankedDataArray.io.resp
+  mainPipe.io.data_resp := bankedDataArray.io.readline_resp
 
   //loadPipe read bankedDataArray in s1
   bankedDataArray.io.readSel := RegNext(ldSelRead)
@@ -682,13 +688,10 @@ class DCacheImp(outer: DCache) extends LazyModuleImp(outer) with HasDCacheParame
     bankedDataArray.io.read(i) <> ldu(i).io.banked_data_read
     bankedDataArray.io.read_error_delayed(i) <> ldu(i).io.read_error_delayed
 
+    ldu(i).io.banked_data_resp := bankedDataArray.io.resp(i)
     ldu(i).io.bank_conflict_fast := bankedDataArray.io.bank_conflict_fast(i)
     ldu(i).io.bank_conflict_slow := bankedDataArray.io.bank_conflict_slow(i)
   })
-
-  (0 until LoadPipelineWidth).foreach({ case i => {
-    ldu(i).io.banked_data_resp := bankedDataArray.io.resp
-  }})
 
   //----------------------------------------
   // load pipe
@@ -733,13 +736,13 @@ class DCacheImp(outer: DCache) extends LazyModuleImp(outer) with HasDCacheParame
   //prefetch
   val pf_arb_higher_ld0 = RegNext(RegNext(io.lsu.load(0).pf_can_use_mqArb))
   val pf_arb_higher_ld1 = RegNext(RegNext(io.lsu.load(1).pf_can_use_mqArb))
-  
+
   //loadunit0 do not need send missreq and loadunit1 is rsIssue load, will use missArb.in(1)
-  
+
   val pfReqCanSendMp = !mainPipe.io.miss_req.valid && pf_arb_higher_ld0
   val pfReqCanSendLd0 = (!ldu(0).io.miss_req.valid || !mainPipe.io.miss_req.valid) && pf_arb_higher_ld1
   val pfReqCanSend = miss_invalid.andR || pfReqCanSendMp || pfReqCanSendLd0
-  val select_idx = Mux(!mainPipe.io.miss_req.valid, 0.U, 
+  val select_idx = Mux(!mainPipe.io.miss_req.valid, 0.U,
                     (Mux(!ldu(0).io.miss_req.valid, 1.U,
                         2.U))
                     )
@@ -828,7 +831,7 @@ class DCacheImp(outer: DCache) extends LazyModuleImp(outer) with HasDCacheParame
    //----------------------------------------
   //sbuffer
   io.lsu.store.save_amo_row_data <> missQueue.io.save_amo_row_data
-  
+
   io.lsu.store.refill_row_data <> missQueue.io.refill_to_sbuffer
   io.lsu.store.refill_to_mp_req.valid := (missQueue.io.replace_pipe_req.fire && missQueue.io.replace_pipe_req.bits.source === STORE_SOURCE.U) || missQueue.io.main_pipe_req.fire
   io.lsu.store.refill_to_mp_req.bits := Mux(missQueue.io.replace_pipe_req.fire, missQueue.io.replace_pipe_req.bits.id, 0.U)

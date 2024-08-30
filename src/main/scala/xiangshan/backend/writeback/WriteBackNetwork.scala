@@ -132,9 +132,9 @@ class WriteBackNetworkImp(outer:WriteBackNetwork)(implicit p:Parameters) extends
       realSrc.bits.uop.debugInfo.writebackTime := timer
       if (s._2._1.isRob || s._2._1.isVrs || s._2._1.isVprs || s._2._1.isVms || s._2._1.isMemRs && cfg.throughVectorRf) {
         if(cfg.exuType == ExuType.jmp){
-          dst := PipeWithRedirectDelayFDI(realSrc, 2, p)
+          dst := PipeWithRedirectDelayFDI(realSrc, 1, p)
         } else {
-          dst := PipeWithRedirect(realSrc, 2, p)
+          dst := PipeWithRedirect(realSrc, 1, p)
         }
       } else if (s._2._1.isIntRs) {
         if (cfg.isIntType || cfg.isMemType || cfg.isVecType) {

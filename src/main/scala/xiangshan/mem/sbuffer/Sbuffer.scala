@@ -908,6 +908,10 @@ class Sbuffer(implicit p: Parameters) extends DCacheModule with HasSbufferConst 
   XSPerfAccumulate("mainpipe_resp_valid", io.dcache.main_pipe_hit_resp.fire)
   XSPerfAccumulate("replay_resp_valid", io.dcache.replay_resp.fire)
   XSPerfAccumulate("coh_timeout", cohHasTimeOut)
+  XSPerfAccumulate("sbuffer_valid_dcache_notReady", io.dcache.req.valid && io.dcache.req.ready)
+  XSPerfAccumulate("dcache_resp_replay_miss", io.dcache.replay_resp.valid && io.dcache.replay_resp.bits.miss)
+  XSPerfAccumulate("dcache_resp_replay_replay", io.dcache.replay_resp.valid && io.dcache.replay_resp.bits.replay)
+  XSPerfAccumulate("dcache_resp_replay_replay", io.dcache.replay_resp.valid && io.dcache.replay_resp.bits.replay)
 
   // val (store_latency_sample, store_latency) = TransactionLatencyCounter(io.lsu.req.fire, io.lsu.resp.fire)
   // XSPerfHistogram("store_latency", store_latency, store_latency_sample, 0, 100, 10)

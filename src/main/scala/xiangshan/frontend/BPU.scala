@@ -207,6 +207,40 @@ class Predictor(implicit p: Parameters) extends XSModule
   val ctrl = DelayN(io.ctrl, 1)
   val predictors = Module(if (useBPD) new Composer else new FakePredictor)
 
+  def numOfStage = 3
+  require(numOfStage > 1, "BPU numOfStage must be greater than 1")
+  val topdown_stages = RegInit(VecInit(Seq.fill(numOfStage)(0.U.asTypeOf(new FrontendTopDownBundle))))
+
+  // following can only happen on s1
+  val controlRedirectBubble = Wire(Bool())
+  val ControlBTBMissBubble = Wire(Bool())
+  val TAGEMissBubble = Wire(Bool())
+  val SCMissBubble = Wire(Bool())
+  val ITTAGEMissBubble = Wire(Bool())
+  val RASMissBubble = Wire(Bool())
+
+  val memVioRedirectBubble = Wire(Bool())
+  val otherRedirectBubble = Wire(Bool())
+  val btbMissBubble = Wire(Bool())
+  otherRedirectBubble := false.B
+  memVioRedirectBubble := false.B
+
+  // override can happen between s1-s2 and s2-s3
+  val overrideBubble = Wire(Vec(numOfStage - 1, Bool()))
+  def overrideStage = 1
+  // ftq update block can happen on s1, s2 and s3
+  val ftqUpdateBubble = Wire(Vec(numOfStage, Bool()))
+  def ftqUpdateStage = 0
+  // ftq full stall only happens on s3 (last stage)
+  val ftqFullStall = Wire(Bool())
+
+  // by default, no bubble event
+  topdown_stages(0) := 0.U.asTypeOf(new FrontendTopDownBundle)
+  // event movement driven by clock only
+  for (i <- 0 until numOfStage - 1) {
+    topdown_stages(i + 1) := topdown_stages(i)
+  }
+
   // ctrl signal
   predictors.io.ctrl := ctrl
   predictors.io.reset_vector := io.reset_vector
@@ -714,6 +748,87 @@ class Predictor(implicit p: Parameters) extends XSModule
     when (ghv_wens(i)) {
       ghv(i) := ghv_write_datas(i)
     }
+  }
+
+  // TODO: signals for memVio and other Redirects
+  controlRedirectBubble := do_redirect_dup(0).valid && do_redirect_dup(0).bits.ControlRedirectBubble
+  ControlBTBMissBubble := do_redirect_dup(0).bits.ControlBTBMissBubble
+  TAGEMissBubble := do_redirect_dup(0).bits.TAGEMissBubble
+  SCMissBubble := do_redirect_dup(0).bits.SCMissBubble
+  ITTAGEMissBubble := do_redirect_dup(0).bits.ITTAGEMissBubble
+  RASMissBubble := do_redirect_dup(0).bits.RASMissBubble
+
+  memVioRedirectBubble := do_redirect_dup(0).valid && do_redirect_dup(0).bits.MemVioRedirectBubble
+  otherRedirectBubble := do_redirect_dup(0).valid && do_redirect_dup(0).bits.OtherRedirectBubble
+  btbMissBubble := do_redirect_dup(0).valid && do_redirect_dup(0).bits.BTBMissBubble
+  overrideBubble(0) := s2_redirect_dup(0)
+  overrideBubble(1) := s3_redirect_dup(0)
+  ftqUpdateBubble(0) := !s1_components_ready_dup(0)
+  ftqUpdateBubble(1) := !s2_components_ready_dup(0)
+  ftqUpdateBubble(2) := !s3_components_ready_dup(0)
+  ftqFullStall := !io.bpu_to_ftq.resp.ready
+  io.bpu_to_ftq.resp.bits.topdown_info := topdown_stages(numOfStage - 1)
+
+  // topdown handling logic here
+  when (controlRedirectBubble) {
+    /*
+    for (i <- 0 until numOfStage)
+      topdown_stages(i).reasons(TopDownCounters.ControlRedirectBubble.id) := true.B
+    io.bpu_to_ftq.resp.bits.topdown_info.reasons(TopDownCounters.ControlRedirectBubble.id) := true.B
+    */
+    when (ControlBTBMissBubble) {
+      for (i <- 0 until numOfStage)
+        topdown_stages(i).reasons(TopDownCounters.BTBMissBubble.id) := true.B
+      io.bpu_to_ftq.resp.bits.topdown_info.reasons(TopDownCounters.BTBMissBubble.id) := true.B
+    } .elsewhen (TAGEMissBubble) {
+      for (i <- 0 until numOfStage)
+        topdown_stages(i).reasons(TopDownCounters.TAGEMissBubble.id) := true.B
+      io.bpu_to_ftq.resp.bits.topdown_info.reasons(TopDownCounters.TAGEMissBubble.id) := true.B
+    } .elsewhen (SCMissBubble) {
+      for (i <- 0 until numOfStage)
+        topdown_stages(i).reasons(TopDownCounters.SCMissBubble.id) := true.B
+      io.bpu_to_ftq.resp.bits.topdown_info.reasons(TopDownCounters.SCMissBubble.id) := true.B
+    } .elsewhen (ITTAGEMissBubble) {
+      for (i <- 0 until numOfStage)
+        topdown_stages(i).reasons(TopDownCounters.ITTAGEMissBubble.id) := true.B
+      io.bpu_to_ftq.resp.bits.topdown_info.reasons(TopDownCounters.ITTAGEMissBubble.id) := true.B
+    } .elsewhen (RASMissBubble) {
+      for (i <- 0 until numOfStage)
+        topdown_stages(i).reasons(TopDownCounters.RASMissBubble.id) := true.B
+      io.bpu_to_ftq.resp.bits.topdown_info.reasons(TopDownCounters.RASMissBubble.id) := true.B
+    }
+  }
+  when (memVioRedirectBubble) {
+    for (i <- 0 until numOfStage)
+      topdown_stages(i).reasons(TopDownCounters.MemVioRedirectBubble.id) := true.B
+    io.bpu_to_ftq.resp.bits.topdown_info.reasons(TopDownCounters.MemVioRedirectBubble.id) := true.B
+  }
+  when (otherRedirectBubble) {
+    for (i <- 0 until numOfStage)
+      topdown_stages(i).reasons(TopDownCounters.OtherRedirectBubble.id) := true.B
+    io.bpu_to_ftq.resp.bits.topdown_info.reasons(TopDownCounters.OtherRedirectBubble.id) := true.B
+  }
+  when (btbMissBubble) {
+    for (i <- 0 until numOfStage)
+      topdown_stages(i).reasons(TopDownCounters.BTBMissBubble.id) := true.B
+    io.bpu_to_ftq.resp.bits.topdown_info.reasons(TopDownCounters.BTBMissBubble.id) := true.B
+  }
+
+  for (i <- 0 until numOfStage) {
+    if (i < numOfStage - overrideStage) {
+      when (overrideBubble(i)) {
+        for (j <- 0 to i)
+          topdown_stages(j).reasons(TopDownCounters.OverrideBubble.id) := true.B
+      }
+    }
+    if (i < numOfStage - ftqUpdateStage) {
+      when (ftqUpdateBubble(i)) {
+        topdown_stages(i).reasons(TopDownCounters.FtqUpdateBubble.id) := true.B
+      }
+    }
+  }
+  when (ftqFullStall) {
+    topdown_stages(0).reasons(TopDownCounters.FtqFullStall.id) := true.B
   }
 
   XSError(isBefore(redirect_dup(0).cfiUpdate.histPtr, s3_ghist_ptr_dup(0)) && do_redirect_dup(0).valid,

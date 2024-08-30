@@ -107,6 +107,10 @@ class LsqWrappper(implicit p: Parameters) extends XSModule with HasDCacheParamet
     val loadEnqRAW = Vec(LoadPipelineWidth, Flipped(new LoadEnqRAWBundle)) //Load S2 enq
     val mshrFull = Input(Bool())
     val lduqueryAndUpdate = Vec(LoadPipelineWidth, Flipped(ValidIO(new LoadQueueDataUpdateBundle))) //from loadUnit S2
+    // top-down
+    val debugTopDown = new LoadQueueTopDownIO
+    val lqCanAccept = Output(Bool())
+    val sqCanAccept = Output(Bool())
   })
 
   dontTouch(io.tlb_hint)
@@ -119,6 +123,8 @@ class LsqWrappper(implicit p: Parameters) extends XSModule with HasDCacheParamet
   // LSQ: send out canAccept when both load queue and store queue are ready
   // Dispatch: send instructions to LSQ only when they are ready
   io.enq.canAccept := loadQueue.io.enq.canAccept && storeQueue.io.enq.canAccept
+  io.lqCanAccept := loadQueue.io.enq.canAccept
+  io.sqCanAccept := storeQueue.io.enq.canAccept
   loadQueue.io.enq.sqCanAccept := storeQueue.io.enq.canAccept
   storeQueue.io.enq.lqCanAccept := loadQueue.io.enq.canAccept
   loadQueue.io.stAddrReadyPtr := storeQueue.io.stPtrInfo.stAddrReadyPtr
@@ -173,7 +179,8 @@ class LsqWrappper(implicit p: Parameters) extends XSModule with HasDCacheParamet
   loadQueue.io.stDataReadySqPtr := storeQueue.io.stDataReadySqPtr
   loadQueue.io.storeDataWbPtr := io.storeDataWbPtr
   loadQueue.io.ldLdViolationResp <> io.loadViolationQuery
-
+  loadQueue.io.debugTopDown <> io.debugTopDown
+  
   io.lqDeq := loadQueue.io.lqDeq
   io.replayQLdStop := loadQueue.io.replayQLdStop
   loadQueue.io.fastReplayStop := io.fastReplayStop

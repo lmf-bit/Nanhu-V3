@@ -27,6 +27,8 @@ import xiangshan.backend.rob._
 import xiangshan.mem.mdp._
 import xs.utils.perf.HasPerfLogging
 import xiangshan.VstartType
+import xiangshan.backend.rob.{RobDispatchTopDownIO}
+import xiangshan.backend.{CoreDispatchTopDownIO}
 
 // read rob and enqueue
 class Dispatch(implicit p: Parameters) extends XSModule with HasPerfEvents with HasPerfLogging {
@@ -57,6 +59,17 @@ class Dispatch(implicit p: Parameters) extends XSModule with HasPerfEvents with 
     // lfst
     val lfst = new DispatchLFSTIO
     val vstart = Input(UInt(log2Ceil(VLEN + 1).W))
+    //perf only
+    val robHead = Input(new MicroOp)
+    val stallReason = Flipped(new StallReasonIO(RenameWidth))
+    val lqCanAccept = Input(Bool())
+    val sqCanAccept = Input(Bool())
+    val robHeadNotReady = Input(Bool())
+    val robFull = Input(Bool())
+    val debugTopDown = new Bundle {
+      val fromRob = Flipped(new RobDispatchTopDownIO)
+      val fromCore = new CoreDispatchTopDownIO
+    }
   })
 
   /**
@@ -215,6 +228,71 @@ class Dispatch(implicit p: Parameters) extends XSModule with HasPerfEvents with 
   }
 
   //perf monitor
+  val notIssue = !io.debugTopDown.fromRob.robHeadLsIssue
+  val tlbReplay = io.debugTopDown.fromCore.fromMem.robHeadTlbReplay
+  val tlbMiss = io.debugTopDown.fromCore.fromMem.robHeadTlbMiss
+  val vioReplay = io.debugTopDown.fromCore.fromMem.robHeadLoadVio
+  val mshrReplay = io.debugTopDown.fromCore.fromMem.robHeadLoadMSHR
+  val l1Miss = io.debugTopDown.fromCore.fromMem.robHeadMissInDCache
+  val l2Miss = io.debugTopDown.fromCore.l2MissMatch
+  // val l3Miss = io.debugTopDown.fromCore.l3MissMatch
+
+  val ldReason = Mux(l1Miss, TopDownCounters.LoadL2Stall.id.U,
+  // Mux(l3Miss, TopDownCounters.LoadMemStall.id.U,
+  Mux(l2Miss, TopDownCounters.LoadL3Stall.id.U,
+  Mux(notIssue, TopDownCounters.MemNotReadyStall.id.U,
+  Mux(tlbMiss, TopDownCounters.LoadTLBStall.id.U,
+  Mux(tlbReplay, TopDownCounters.LoadTLBStall.id.U,
+  Mux(mshrReplay, TopDownCounters.LoadMSHRReplayStall.id.U,
+  Mux(vioReplay, TopDownCounters.LoadVioReplayStall.id.U,
+  TopDownCounters.LoadL1Stall.id.U)))))))
+
+  val decodeReason = RegNext(io.stallReason.reason)
+  val renameReason = io.stallReason.reason
+
+  private val canAccept = !hasValidInstr || allResourceReady
+  val stallReason = Wire(chiselTypeOf(io.stallReason.reason))
+  val firedVec = io.fromRename.map(_.fire)
+  io.stallReason.backReason.valid := !canAccept
+  io.stallReason.backReason.bits := TopDownCounters.OtherCoreStall.id.U
+  stallReason.zip(io.stallReason.reason).zip(firedVec).zipWithIndex.map { case (((update, in), fire), idx) =>
+    val headIsInt = FuType.isIntExu(io.robHead.ctrl.fuType)  && io.robHeadNotReady
+    val headIsFp  = FuType.isFpExu(io.robHead.ctrl.fuType)   && io.robHeadNotReady
+    val headIsDiv = FuType.isDivSqrt(io.robHead.ctrl.fuType) && io.robHeadNotReady
+    val headIsLd  = io.robHead.ctrl.fuType === FuType.ldu && io.robHeadNotReady || !io.lqCanAccept
+    val headIsSt  = io.robHead.ctrl.fuType === FuType.stu && io.robHeadNotReady || !io.sqCanAccept
+    val headIsAmo = io.robHead.ctrl.fuType === FuType.mou && io.robHeadNotReady
+    val headIsLs  = headIsLd || headIsSt
+    val robLsFull = io.robFull || !io.lqCanAccept || !io.sqCanAccept
+
+    import TopDownCounters._
+    update := MuxCase(OtherCoreStall.id.U, Seq(
+      // fire
+      (fire                                              ) -> NoStall.id.U          ,
+      // dispatch not stall / core stall from decode or rename
+      (in =/= OtherCoreStall.id.U && in =/= NoStall.id.U ) -> in                    ,
+      // dispatch queue stall
+      (!io.toIntDq.canAccept(0) && !headIsInt && !io.robFull) -> IntDqStall.id.U       ,
+      (!io.toFpDq.canAccept(0)  && !headIsFp  && !io.robFull) -> FpDqStall.id.U        ,
+      (!io.toLsDq.canAccept(0)  && !headIsLs  && !robLsFull ) -> LsDqStall.id.U        ,
+      // rob stall
+      (headIsAmo                                         ) -> AtomicStall.id.U      ,
+      (headIsSt                                          ) -> StoreStall.id.U       ,
+      (headIsLd                                          ) -> ldReason              ,
+      (headIsDiv                                         ) -> DivStall.id.U         ,
+      (headIsInt                                         ) -> IntNotReadyStall.id.U ,
+      (headIsFp                                          ) -> FPNotReadyStall.id.U  ,
+      (renameReason(idx) =/= NoStall.id.U                ) -> renameReason(idx)     ,
+      (decodeReason(idx) =/= NoStall.id.U                ) -> decodeReason(idx)     ,
+    ))
+  }
+
+  TopDownCounters.values.foreach(ctr => XSPerfAccumulate(ctr.toString(), PopCount(stallReason.map(_ === ctr.id.U))))
+
+  val robTrueCommit = io.debugTopDown.fromRob.robTrueCommit
+  // TopDownCounters.values.foreach(ctr => XSPerfRolling("td_"+ctr.toString(), PopCount(stallReason.map(_ === ctr.id.U)),
+  //                                                     robTrueCommit, 1000, clock, reset))
+
   val renameFireCnt = PopCount(io.recv.zip(io.fromRename).map({ case (a, b) => a && b.valid }))
   val enqFireCnt = PopCount(io.toIntDq.req.map(_.valid && io.toIntDq.canAccept(0))) +
     PopCount(io.toFpDq.req.map(_.valid && io.toFpDq.canAccept(0))) +

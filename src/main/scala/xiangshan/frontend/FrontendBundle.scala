@@ -25,6 +25,10 @@ import utils._
 import xs.utils._
 import scala.{Tuple2 => &}
 
+class FrontendTopDownBundle(implicit p: Parameters) extends XSBundle {
+  val reasons = Vec(TopDownCounters.NumStallReasons.id, Bool())
+  val stallWidth = UInt(log2Ceil(PredictWidth).W)
+}
 
 class FetchRequestBundle(implicit p: Parameters) extends XSBundle with HasICacheParameters {
 
@@ -35,6 +39,8 @@ class FetchRequestBundle(implicit p: Parameters) extends XSBundle with HasICache
   //slow path
   val ftqIdx          = new FtqPtr
   val ftqOffset       = ValidUndirectioned(UInt(log2Ceil(PredictWidth).W))
+
+  val topdown_info    = new FrontendTopDownBundle
 
   def crossCacheline =  startAddr(blockOffBits-1, blockOffBits-3) >= 5.U(3.W)
 
@@ -74,6 +80,8 @@ class FtqICacheInfo(implicit p: Parameters)extends XSBundle with HasICacheParame
 class IFUICacheIO(implicit p: Parameters)extends XSBundle with HasICacheParameters{
   val icacheReady       = Output(Bool())
   val resp              = Vec(PortNumber, ValidIO(new ICacheMainPipeResp))
+  val topdownIcacheMiss = Output(Bool())
+  val topdownItlbMiss = Output(Bool())
 }
 
 class FtqToICacheRequestBundle(implicit p: Parameters)extends XSBundle with HasICacheParameters{
@@ -123,6 +131,7 @@ class FetchToIBuffer(implicit p: Parameters) extends XSBundle {
   val triggered    = Vec(PredictWidth, new TriggerCf)
   val mmioFetch = Bool()
   val fdiUntrusted = Vec(PredictWidth, Bool())
+  val topdown_info = new FrontendTopDownBundle
 }
 
 // class BitWiseUInt(val width: Int, val init: UInt) extends Module {
@@ -513,12 +522,14 @@ class BranchPredictionResp(implicit p: Parameters) extends XSBundle with HasBPUC
   val s3 = new BranchPredictionBundle
 
   val lastStageMeta = UInt(MaxMetaLength.W)
-  val lastStageSpecInfo = new SpeculativeInfo
+  val lastStageSpecInfo = new FtqRedirectEntry
   val lastStageFtbEntry = new FTBEntry
   
   val s1_uftbHit = Bool()
   val s1_uftbHasIndirect = Bool()
   // val s1_ftbCloseReq = Bool()
+
+  val topdown_info = new FrontendTopDownBundle
 
   def selectedRespForFtq: BranchPredictionBundle ={
     val res =
@@ -565,4 +576,42 @@ class BranchPredictionUpdate(implicit p: Parameters) extends XSBundle with HasBP
 
 }
 
-class BranchPredictionRedirect(implicit p: Parameters) extends Redirect with HasBPUConst {}
+class BranchPredictionRedirect(implicit p: Parameters) extends Redirect with HasBPUConst {
+  require(isInstanceOf[Redirect])
+  val BTBMissBubble = Bool()
+  def ControlRedirectBubble = debugIsCtrl
+  // if mispred br not in ftb, count as BTB miss
+  def ControlBTBMissBubble = ControlRedirectBubble && !cfiUpdate.br_hit && !cfiUpdate.jr_hit
+  def TAGEMissBubble = ControlRedirectBubble && cfiUpdate.br_hit && !cfiUpdate.sc_hit
+  def SCMissBubble = ControlRedirectBubble && cfiUpdate.br_hit && cfiUpdate.sc_hit
+  def ITTAGEMissBubble = ControlRedirectBubble && cfiUpdate.jr_hit && !cfiUpdate.pd.isRet
+  def RASMissBubble = ControlRedirectBubble && cfiUpdate.jr_hit && cfiUpdate.pd.isRet
+  def MemVioRedirectBubble = debugIsMemVio
+  def OtherRedirectBubble = !debugIsCtrl && !debugIsMemVio
+
+  def connectRedirect(source: Redirect): Unit = {
+    for ((name, data) <- this.elements) {
+      if (source.elements.contains(name)) {
+        data := source.elements(name)
+      }
+    }
+  }
+
+  def display(cond: Bool): Unit = {
+    // XSDebug(cond, p"-----------BranchPredictionRedirect----------- \n")
+    // XSDebug(cond, p"-----------cfiUpdate----------- \n")
+    // XSDebug(cond, p"[pc] ${Hexadecimal(cfiUpdate.pc)}\n")
+    // // XSDebug(cond, p"[hist] ${Binary(cfiUpdate.hist.predHist)}\n")
+    // XSDebug(cond, p"[br_hit] ${cfiUpdate.br_hit} [isMisPred] ${cfiUpdate.isMisPred}\n")
+    // XSDebug(cond, p"[pred_taken] ${cfiUpdate.predTaken} [taken] ${cfiUpdate.taken} [isMisPred] ${cfiUpdate.isMisPred}\n")
+    // XSDebug(cond, p"[target] ${Hexadecimal(cfiUpdate.target)} \n")
+    // XSDebug(cond, p"[shift] ${cfiUpdate.shift}\n")
+    // XSDebug(cond, p"------------------------------- \n")
+    // XSDebug(cond, p"[robPtr] f=${robIdx.flag} v=${robIdx.value}\n")
+    // XSDebug(cond, p"[ftqPtr] f=${ftqIdx.flag} v=${ftqIdx.value} \n")
+    // XSDebug(cond, p"[ftqOffset] ${ftqOffset} \n")
+    // XSDebug(cond, p"[stFtqIdx] f=${stFtqIdx.flag} v=${stFtqIdx.value}\n")
+    // XSDebug(cond, p"[stFtqOffset] ${stFtqOffset}\n")
+    // XSDebug(cond, p"---------------------------------------------- \n")
+  }
+}

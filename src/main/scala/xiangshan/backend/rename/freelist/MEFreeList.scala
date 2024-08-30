@@ -90,6 +90,11 @@ class MEFreeList(size: Int)(implicit p: Parameters) extends BaseFreeList(size) w
                                                            distanceBetween(tailPtrNext, headPtr)))
   io.canAllocate := freeRegCntReg >= RenameWidth.U
 
+  QueuePerf(size = size, utilization = freeRegCntReg, full = freeRegCntReg === 0.U)
+
+  XSPerfAccumulate("allocation_blocked_cycle", !io.canAllocate)
+  XSPerfAccumulate("can_alloc_wrong", !io.canAllocate && freeRegCntReg >= RenameWidth.U)
+
   val perfEvents = Seq(
     ("me_freelist_1_4_valid", freeRegCntReg <  (size / 4).U                                     ),
     ("me_freelist_2_4_valid", freeRegCntReg >= (size / 4).U && freeRegCntReg <= (size / 2).U    ),

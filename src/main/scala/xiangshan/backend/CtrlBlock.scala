@@ -39,6 +39,10 @@ import xiangshan.backend.rob.{Rob, RobCSRIO, RobLsqIO, RobPtr, RollBackList}
 import xiangshan.backend.issue.DqDispatchNode
 import xiangshan.backend.execute.fu.csr.vcsr._
 import xs.utils.perf.HasPerfLogging
+import xiangshan.backend.ctrlblock.DebugLSIO
+import xiangshan.backend.ctrlblock.LsTopdownInfo
+import xiangshan.backend.rob.RobCoreTopDownIO
+import xiangshan.backend.execute.exublock.MemCoreTopDownIO
 
 class CtrlToFtqIO(implicit p: Parameters) extends XSBundle {
   val rob_commits = Vec(CommitWidth, Valid(new RobCommitInfo))
@@ -46,7 +50,11 @@ class CtrlToFtqIO(implicit p: Parameters) extends XSBundle {
   
   val redirectAhead = Valid(new Redirect)
 }
-
+class CoreDispatchTopDownIO extends Bundle {
+  val l2MissMatch = Input(Bool())
+  // val l3MissMatch = Input(Bool())
+  val fromMem = Flipped(new MemCoreTopDownIO)
+}
 class CtrlBlock(implicit p: Parameters) extends LazyModule with HasXSParameter {
   val rob = LazyModule(new Rob)
   val wbMergeBuffer = LazyModule(new WbMergeBufferV2)
@@ -85,6 +93,10 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
       val exception = ValidIO(new ExceptionInfo)
       // to mem block
       val lsq = new RobLsqIO
+      val debug_ls = Flipped(new DebugLSIO)
+      val robHeadLsIssue = Input(Bool())
+      val lsTopdownInfo = Vec(exuParameters.LduCnt, Input(new LsTopdownInfo))
+      val robDeqPtr = Output(new RobPtr)
     }
     val csrCtrl = Input(new CustomCSRCtrlIO)
     val perfInfo = Output(new Bundle{
@@ -102,9 +114,14 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
     val debug_int_rat = Vec(32, Output(UInt(PhyRegIdxWidth.W)))
     val debug_fp_rat = Vec(32, Output(UInt(PhyRegIdxWidth.W)))
     val debug_vec_rat = Output(Vec(32, UInt(VIPhyRegIdxWidth.W)))
-
+    val debugTopDown = new Bundle {
+      val fromRob = new RobCoreTopDownIO
+      val fromCore = new CoreDispatchTopDownIO
+    }
     val lsqVecDeqCnt = Input(new LsqVecDeqIO)
     val vecFaultOnlyFirst = Output(ValidIO(new ExuOutput))
+    val sqCanAccept = Input(Bool())
+    val lqCanAccept = Input(Bool())
   })
   require(outer.dispatchNode.out.count(_._2._1.isIntRs) == 1)
   require(outer.dispatchNode.out.count(_._2._1.isFpRs) == 1)
@@ -189,6 +206,7 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
   //Decode
   decode.io.in      <> io.frontend.cfVec
   decode.io.csrCtrl := RegNext(io.csrCtrl)
+  decode.io.stallReason.in <> io.frontend.stallReason
 
   // memory dependency predict
   // when decode, send fold pc to mdp
@@ -350,6 +368,7 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
   rename.io.snpt.flushVec := flushVecNext
   rename.io.snptLastEnq.valid := !isEmpty(snpt.io.enqPtr, snpt.io.deqPtr)
   rename.io.snptLastEnq.bits := snpt.io.snapshots((snpt.io.enqPtr - 1.U).value).robIdx.head
+  rename.io.stallReason.in <> decode.io.stallReason.out
 
   rob.io.snpt.snptEnq := DontCare
   rob.io.snpt.snptDeq := snpt.io.deq
@@ -434,6 +453,14 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
   dispatch.io.allocPregs <> io.allocPregs
 //  dispatch.io.singleStep := RegNext(io.csrCtrl.singlestep)
   dispatch.io.vstart := RegNext(io.vstart)
+  dispatch.io.robHead := rob.io.debugRobHead
+  dispatch.io.stallReason <> rename.io.stallReason.out
+  dispatch.io.debugTopDown.fromRob := rob.io.debugTopDown.toDispatch
+  dispatch.io.debugTopDown.fromCore := io.debugTopDown.fromCore
+  dispatch.io.lqCanAccept := io.lqCanAccept
+  dispatch.io.sqCanAccept := io.sqCanAccept
+  dispatch.io.robHeadNotReady := rob.io.headNotReady
+  dispatch.io.robFull := rob.io.robFull
 
   private val redirectDelay_dup_0 = Pipe(io.redirectIn)
   private val redirectDelay_dup_3 = Pipe(io.redirectIn)
@@ -500,6 +527,15 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
 
   // rob to mem block
   io.robio.lsq <> rob.io.lsq
+  rob.io.debug_ls := io.robio.debug_ls
+  rob.io.lsTopdownInfo := io.robio.lsTopdownInfo
+  rob.io.debugHeadLsIssue := io.robio.robHeadLsIssue
+  io.robio.robDeqPtr := rob.io.robDeqPtr
+  rob.io.debugEnqLsq.canAccept := io.enqLsq.canAccept
+  rob.io.debugEnqLsq.resp := io.enqLsq.resp
+  rob.io.debugEnqLsq.req := io.enqLsq.req
+  rob.io.debugEnqLsq.needAlloc := io.enqLsq.needAlloc
+  io.debugTopDown.fromRob := rob.io.debugTopDown.toCore
 
   // performance counter
   if (env.EnableTopDown) {
@@ -600,6 +636,43 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
   XSPerfAccumulate("Topdown_Backend_Stall", backendStall)
   XSPerfAccumulate("Topdown_Stall", frontendStall + backendStall + bidirectStall)
   XSPerfAccumulate("Topdown_Op_spec", opSpec)
+
+  val AllDqCanAccept = intDq.io.enq.canAccept && fpDq.io.enq.canAccept && lsDq.io.enq.canAccept
+  val AllFlCanAccept = rename.io.intFlCanAccept && rename.io.fpFlCanAccept
+
+  val backendRobStall = PopCount( (rename.io.in map { ren =>  (ren.valid || CommitType.isFused(ren.bits.ctrl.commitType)) && !ren.ready && !rename.io.enqRob.canAccept && AllDqCanAccept && AllFlCanAccept && !rename.io.rabCommits.isWalk }) )
+  val backendWalkStall = PopCount( (rename.io.in map { ren =>  (ren.valid || CommitType.isFused(ren.bits.ctrl.commitType)) && !ren.ready && rename.io.enqRob.canAccept && AllDqCanAccept && AllFlCanAccept && rename.io.rabCommits.isWalk }) )
+  val backendIntFlStall = PopCount( (rename.io.in map { ren =>  (ren.valid || CommitType.isFused(ren.bits.ctrl.commitType)) && !ren.ready && rename.io.enqRob.canAccept && AllDqCanAccept && !rename.io.intFlCanAccept && rename.io.fpFlCanAccept && !rename.io.rabCommits.isWalk})  )
+  val backendFpFlStall = PopCount( (rename.io.in map { ren =>  (ren.valid || CommitType.isFused(ren.bits.ctrl.commitType)) && !ren.ready && rename.io.enqRob.canAccept && AllDqCanAccept && rename.io.intFlCanAccept && !rename.io.fpFlCanAccept && !rename.io.rabCommits.isWalk})  )
+  val backendIntDqStall = PopCount( (rename.io.in map { ren =>  (ren.valid || CommitType.isFused(ren.bits.ctrl.commitType)) && !ren.ready && rename.io.enqRob.canAccept && !intDq.io.enq.canAccept && fpDq.io.enq.canAccept && lsDq.io.enq.canAccept && AllFlCanAccept && !rename.io.rabCommits.isWalk})  )
+  val backendFpDqStall = PopCount( (rename.io.in map { ren =>  (ren.valid || CommitType.isFused(ren.bits.ctrl.commitType)) && !ren.ready && rename.io.enqRob.canAccept && intDq.io.enq.canAccept && !fpDq.io.enq.canAccept && lsDq.io.enq.canAccept && AllFlCanAccept && !rename.io.rabCommits.isWalk})  )
+  val backendLsDqStall = PopCount( (rename.io.in map { ren =>  (ren.valid || CommitType.isFused(ren.bits.ctrl.commitType)) && !ren.ready && rename.io.enqRob.canAccept && intDq.io.enq.canAccept && fpDq.io.enq.canAccept && !lsDq.io.enq.canAccept && AllFlCanAccept && !rename.io.rabCommits.isWalk})  )
+  val backendintFlAndRobStall = PopCount( (rename.io.in map { ren =>  (ren.valid || CommitType.isFused(ren.bits.ctrl.commitType)) && !ren.ready && !rename.io.enqRob.canAccept && AllDqCanAccept && !rename.io.intFlCanAccept && rename.io.fpFlCanAccept && !rename.io.rabCommits.isWalk})  )
+  val backendfpFlAndRobStall = PopCount( (rename.io.in map { ren =>  (ren.valid || CommitType.isFused(ren.bits.ctrl.commitType)) && !ren.ready && !rename.io.enqRob.canAccept && AllDqCanAccept && rename.io.intFlCanAccept && !rename.io.fpFlCanAccept && !rename.io.rabCommits.isWalk})  )
+  val backendintDqAndintFlStall = PopCount( (rename.io.in map { ren =>  (ren.valid || CommitType.isFused(ren.bits.ctrl.commitType)) && !ren.ready && !rename.io.enqRob.canAccept && !intDq.io.enq.canAccept && fpDq.io.enq.canAccept && lsDq.io.enq.canAccept && !rename.io.intFlCanAccept && rename.io.fpFlCanAccept && !rename.io.rabCommits.isWalk})  )
+  val backendlsDqAndintFlStall = PopCount( (rename.io.in map { ren =>  (ren.valid || CommitType.isFused(ren.bits.ctrl.commitType)) && !ren.ready && !rename.io.enqRob.canAccept && intDq.io.enq.canAccept && fpDq.io.enq.canAccept && !lsDq.io.enq.canAccept && !rename.io.intFlCanAccept && rename.io.fpFlCanAccept && !rename.io.rabCommits.isWalk})  )
+  val backendRobAndintDqStall = PopCount( (rename.io.in map { ren =>  (ren.valid || CommitType.isFused(ren.bits.ctrl.commitType)) && !ren.ready && !rename.io.enqRob.canAccept && !intDq.io.enq.canAccept && fpDq.io.enq.canAccept && lsDq.io.enq.canAccept && AllFlCanAccept && !rename.io.rabCommits.isWalk})  )
+  val backendRobAndlsDqStall = PopCount( (rename.io.in map { ren =>  (ren.valid || CommitType.isFused(ren.bits.ctrl.commitType)) && !ren.ready && !rename.io.enqRob.canAccept && intDq.io.enq.canAccept && fpDq.io.enq.canAccept && !lsDq.io.enq.canAccept && AllFlCanAccept && !rename.io.rabCommits.isWalk})  )
+  val backendRobAndfpDqStall = PopCount( (rename.io.in map { ren =>  (ren.valid || CommitType.isFused(ren.bits.ctrl.commitType)) && !ren.ready && !rename.io.enqRob.canAccept && intDq.io.enq.canAccept && !fpDq.io.enq.canAccept && lsDq.io.enq.canAccept&& AllFlCanAccept && !rename.io.rabCommits.isWalk})  )
+  val backendRobAndintlsDqStall = PopCount( (rename.io.in map { ren =>  (ren.valid || CommitType.isFused(ren.bits.ctrl.commitType)) && !ren.ready && !rename.io.enqRob.canAccept && !intDq.io.enq.canAccept && fpDq.io.enq.canAccept && !lsDq.io.enq.canAccept && AllFlCanAccept && !rename.io.rabCommits.isWalk})  )
+  val backendintAndlsDqStall = PopCount( (rename.io.in map { ren =>  (ren.valid || CommitType.isFused(ren.bits.ctrl.commitType)) && !ren.ready && rename.io.enqRob.canAccept && !intDq.io.enq.canAccept && fpDq.io.enq.canAccept && !lsDq.io.enq.canAccept && AllFlCanAccept && !rename.io.rabCommits.isWalk})  )
+  XSPerfAccumulate("TopdownL2Backend_Stall", backendRobStall + backendWalkStall + backendIntFlStall + backendFpFlStall + backendIntDqStall + backendFpDqStall + backendLsDqStall + backendintFlAndRobStall + backendfpFlAndRobStall + backendintAndlsDqStall + backendRobAndintDqStall + backendRobAndfpDqStall + backendRobAndlsDqStall + backendintDqAndintFlStall + backendlsDqAndintFlStall + backendintAndlsDqStall + backendRobAndintDqStall + backendRobAndlsDqStall + backendRobAndintlsDqStall)
+  XSPerfAccumulate("TopdownL2Backend_RobStall", backendRobStall)
+  XSPerfAccumulate("TopdownL2Backend_WalkStall", backendWalkStall)
+  XSPerfAccumulate("TopdownL2Backend_IntFlStall", backendIntFlStall)
+  XSPerfAccumulate("TopdownL2Backend_FpFlStall", backendFpFlStall)
+  XSPerfAccumulate("TopdownL2Backend_IntDqStall", backendIntDqStall)
+  XSPerfAccumulate("TopdownL2Backend_FpDqStall", backendFpDqStall)
+  XSPerfAccumulate("TopdownL2Backend_LsDqStall", backendLsDqStall)
+  XSPerfAccumulate("TopdownL2Backend_IntFlAndRobStall", backendintFlAndRobStall)
+  XSPerfAccumulate("TopdownL2Backend_FpFlAndRobStall", backendfpFlAndRobStall)
+  XSPerfAccumulate("TopdownL2Backend_IntDqAndintFlStall", backendintDqAndintFlStall)
+  XSPerfAccumulate("TopdownL2Backend_LsDqAndintFlStall", backendlsDqAndintFlStall)
+  XSPerfAccumulate("TopdownL2Backend_IntAndlsDqStall", backendintAndlsDqStall)
+  XSPerfAccumulate("TopdownL2Backend_RobAndintDqStall", backendRobAndintDqStall)
+  XSPerfAccumulate("TopdownL2Backend_RobAndlsDqStall", backendRobAndlsDqStall)
+  XSPerfAccumulate("TopdownL2Backend_RobAndfpDqStall", backendRobAndfpDqStall)
+  XSPerfAccumulate("TopdownL2Backend_RobAndintlsDqStall", backendRobAndintlsDqStall)
 
   private val allPerfInc = allPerfEvents.map(_._2.asTypeOf(new PerfEvent))
   val perfEvents = HPerfMonitor(csrevents, allPerfInc).getPerfEvents
