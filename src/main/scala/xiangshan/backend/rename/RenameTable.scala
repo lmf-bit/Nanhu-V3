@@ -140,9 +140,6 @@ for ((w, i) <- io.archWritePorts.zipWithIndex) {
 
     io.debug_rdata := difftest_table
   }
-  else {
-    io.debug_rdata.foreach(_ := 0.U.asTypeOf(io.debug_rdata))
-  }
 
 }
 
