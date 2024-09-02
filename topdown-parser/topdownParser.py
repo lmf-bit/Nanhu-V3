@@ -148,9 +148,6 @@ def main():
         commit_entries[folder_name] = [
             entry for entry in entries if "commitInstr".lower() in entry['name'].lower()
         ]
-        commit_entries[folder_name] = [
-            entry for entry in entries if "TopdownL2Backend".lower() in entry['name'].lower()
-        ]
 
     # plot topdown-ARM
     plot_foldername = []
@@ -356,22 +353,22 @@ def main():
         fig, ax = plt.subplots(figsize=(10, 7))
         ax.bar(plot_foldername, rob_bound, label='rob Stall')
         ax.bar(plot_foldername, walk_bound, bottom=rob_bound, label='walk Stall')
-        # ax.bar(plot_foldername, intFl_bound, bottom=[i+j for i,j in zip(rob_bound, walk_bound)], label='intFl Stall')
+        ax.bar(plot_foldername, intFl_bound, bottom=[i+j for i,j in zip(rob_bound, walk_bound)], label='intFl Stall')
         # ax.bar(plot_foldername, fpFl_bound, bottom=[i+j+k for i,j,k in zip(rob_bound, walk_bound, intFl_bound)], label='fpFl Stall')
-        ax.bar(plot_foldername, intDq_bound, bottom=[i+j for i,j in zip(rob_bound, walk_bound)], label='intDq Stall')
+        ax.bar(plot_foldername, intDq_bound, bottom=[i+j+k for i,j,k in zip(rob_bound, walk_bound, intFl_bound)], label='intDq Stall')
         # ax.bar(plot_foldername, fpDq_bound, bottom=[i+j+k+l+m for i,j,k,l,m in zip(rob_bound, walk_bound, intFl_bound, fpFl_bound, intDq_bound)], label='fpDq Stall')
-        ax.bar(plot_foldername, lsDq_bound, bottom=[i+j+k for i,j,k in zip(rob_bound, walk_bound, intDq_bound)], label='lsDq Stall')
+        ax.bar(plot_foldername, lsDq_bound, bottom=[i+j+k+l for i,j,k,l in zip(rob_bound, walk_bound, intFl_bound, intDq_bound)], label='lsDq Stall')
         # ax.bar(plot_foldername, intflandrob_bound, bottom=[i+j+k+l for i,j,k,l in zip(rob_bound, walk_bound, intFl_bound, intDq_bound, lsDq_bound)], label='rob and intfl Stall')
         # ax.bar(plot_foldername, fpflandrob_bound, bottom=[i+j+k+l+m+n+o+p for i,j,k,l,m,n,o,p in zip(rob_bound, walk_bound, intFl_bound, fpFl_bound, intDq_bound, fpDq_bound, lsDq_bound, intflandrob_bound)], label='rob and fpfl Stall')
         # ax.bar(plot_foldername, robandintdq_bound, bottom=[i+j+k+l+m for i,j,k,l,m in zip(rob_bound, walk_bound, intFl_bound, intDq_bound, lsDq_bound, intflandrob_bound)], label='rob and intdq Stall')
         # ax.bar(plot_foldername, robandfpdq_bound, bottom=[i+j+k+l+m+n+o+p+q+r for i,j,k,l,m,n,o,p,q,r in zip(rob_bound, walk_bound, intFl_bound, fpFl_bound, intDq_bound, fpDq_bound, lsDq_bound, intflandrob_bound, fpflandrob_bound, robandintdq_bound)], label='rob and fpdq Stall')
         # ax.bar(plot_foldername, robandlsdq_bound, bottom=[i+j+k+l+m+n for i,j,k,l,m,n in zip(rob_bound, walk_bound, intFl_bound, intDq_bound, lsDq_bound, intflandrob_bound, robandintdq_bound)], label='rob and lsdq Stall')
         # ax.bar(plot_foldername, robandintlsdq_bound, bottom=[i+j+k+l+m+n+o for i,j,k,l,m,n,o in zip(rob_bound, walk_bound, intFl_bound, intDq_bound, lsDq_bound, intflandrob_bound, robandintdq_bound, robandlsdq_bound)], label='rob and intlsdq Stall')
-        ax.bar(plot_foldername, robandother_stall_bound, bottom=[i+j+k+l for i,j,k,l in zip(rob_bound, walk_bound, intDq_bound, lsDq_bound)], label='rob and other stall')
-        ax.bar(plot_foldername, intdqandintfl_bound, bottom=[i+j+k+l+m for i,j,k,l,m in zip(rob_bound, walk_bound, intDq_bound, lsDq_bound, robandother_stall_bound)], label='intdq and intfl Stall')
-        ax.bar(plot_foldername, lsdqandintfl_bound, bottom=[i+j+k+l+m+n for i,j,k,l,m,n in zip(rob_bound, walk_bound, intDq_bound, lsDq_bound, robandother_stall_bound, intdqandintfl_bound)], label='lsdq and intfl Stall')
-        ax.bar(plot_foldername, intandlsdq_bound, bottom=[i+j+k+l+m+n+o for i,j,k,l,m,n,o in zip(rob_bound, walk_bound, intDq_bound, lsDq_bound, robandother_stall_bound, intdqandintfl_bound, lsdqandintfl_bound)], label='int and ls dq Stall')
-        ax.bar(plot_foldername, other_bound, bottom=[i+j+k+l+m+n+o+p for i,j,k,l,m,n,o,p in zip(rob_bound, walk_bound, intDq_bound, lsDq_bound, robandother_stall_bound, intdqandintfl_bound, lsdqandintfl_bound, intandlsdq_bound)], label='other Stall')
+        ax.bar(plot_foldername, robandother_stall_bound, bottom=[i+j+k+l+m for i,j,k,l,m in zip(rob_bound, walk_bound, intFl_bound, intDq_bound, lsDq_bound)], label='rob and other stall')
+        ax.bar(plot_foldername, intdqandintfl_bound, bottom=[i+j+k+l+m+n for i,j,k,l,m,n in zip(rob_bound, walk_bound, intFl_bound, intDq_bound, lsDq_bound, robandother_stall_bound)], label='intdq and intfl Stall')
+        ax.bar(plot_foldername, lsdqandintfl_bound, bottom=[i+j+k+l+m+n+o for i,j,k,l,m,n,o in zip(rob_bound, walk_bound, intFl_bound, intDq_bound, lsDq_bound, robandother_stall_bound, intdqandintfl_bound)], label='lsdq and intfl Stall')
+        ax.bar(plot_foldername, intandlsdq_bound, bottom=[i+j+k+l+m+n+o+p for i,j,k,l,m,n,o,p in zip(rob_bound, walk_bound, intFl_bound, intDq_bound, lsDq_bound, robandother_stall_bound, intdqandintfl_bound, lsdqandintfl_bound)], label='int and ls dq Stall')
+        ax.bar(plot_foldername, other_bound, bottom=[i+j+k+l+m+n+o+p+q for i,j,k,l,m,n,o,p,q in zip(rob_bound, walk_bound, intFl_bound, intDq_bound, lsDq_bound, robandother_stall_bound, intdqandintfl_bound, lsdqandintfl_bound, intandlsdq_bound)], label='other Stall')
         ax.set_xlabel('checkpoints')
         ax.set_ylabel('Percentage')
         ax.set_title('spec06')
