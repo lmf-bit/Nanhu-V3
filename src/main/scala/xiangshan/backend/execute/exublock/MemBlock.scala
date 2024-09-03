@@ -665,6 +665,7 @@ class MemBlockImp(outer: MemBlock) extends BasicExuBlockImp(outer)
     loadUnits(i).io.dcache <> dcache.io.lsu.load(i)
     loadUnits(i).io.lduForwardMSHR <> dcache.io.lsu.lduForwardMSHR(i)
     loadUnits(i).io.loadReqHandledResp <> dcache.io.lsu.loadReqHandledResp
+    loadUnits(i).io.s1_ldRob <> dcache.io.lsu.s1_ldRob(i)
 
     dcache.io.lsu.load(i).req.valid := loadUnits(i).io.dcache.req.valid && !loadUnits(i).io.dcache.req.bits.robIdx.needFlush(Pipe(redirectIn))
     // forward

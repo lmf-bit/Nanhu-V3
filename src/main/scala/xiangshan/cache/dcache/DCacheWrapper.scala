@@ -465,13 +465,14 @@ class DCacheTLDBypassLduIO(implicit p: Parameters) extends DCacheBundle {
 class DCacheToLsuIO(implicit p: Parameters) extends DCacheBundle {
   val load  = Vec(LoadPipelineWidth, Flipped(new DCacheLoadIO)) // for speculative load
   val loadReqHandledResp = ValidIO(UInt(log2Up(cfg.nMissEntries).W)) // mshrID which handled load miss req
-  val tl_d_channel = Output(Vec(2, new DCacheTLDBypassLduIO))
+  val tl_d_channel = Output(Vec(LoadPipelineWidth, new DCacheTLDBypassLduIO))
   //todo: remove lsq
   val lsq = ValidIO(new Refill)  // refill to load queue, wake up load misses
   val store = new DCacheToSbufferIO // for sbuffer
   val atomics  = Flipped(new AtomicWordIO)  // atomics reqs
   val release = ValidIO(new Release) // cacheline release hint for ld-ld violation check
   val lduForwardMSHR = Flipped(Vec(LoadPipelineWidth ,new LduForwardFromMSHR))
+  val s1_ldRob = Vec(LoadPipelineWidth, Flipped(ValidIO(new RobPtr)))  //from load s1 to DCache
 }
 
 class DCacheTopDownIO(implicit p: Parameters) extends DCacheBundle {
@@ -729,9 +730,15 @@ class DCacheImp(outer: DCache) extends LazyModuleImp(outer) with HasDCacheParame
   // Request
 //  val missReqArb = Module(new Arbiter(new MissReq, MissReqPortCount))
   val missReqArb = Module(new ArbiterFilterByCacheLineAddr(new MissReq, MissReqPortCount, blockOffBits, PAddrBits))
-
+  // mainPipe has the highest priority
   missReqArb.io.in(MainPipeMissReqPort) <> mainPipe.io.miss_req
+  // loadUnit's priority is decided by robIdx
+  val ld1Oldest = RegNext(io.lsu.s1_ldRob(1).bits < io.lsu.s1_ldRob(0).bits && io.lsu.s1_ldRob.map(_.valid).reduce(_&_))
   for (w <- 0 until LoadPipelineWidth) { missReqArb.io.in(w + 1) <> ldu(w).io.miss_req }
+  when(ld1Oldest){
+    missReqArb.io.in(1) <> ldu(1).io.miss_req
+    missReqArb.io.in(2) <> ldu(0).io.miss_req
+  }
 
   //prefetch
   val pf_arb_higher_ld0 = RegNext(RegNext(io.lsu.load(0).pf_can_use_mqArb))
