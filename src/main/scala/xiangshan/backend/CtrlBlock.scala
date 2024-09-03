@@ -434,7 +434,7 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
 
   for (i <- dispatch.io.toLsDq.req.indices) {
     lsqCtrl.io.enq.needAlloc(i) := Mux(dispatch.io.toLsDq.req(i).valid && dpIsLs(i), Mux(dpIsStore(i), 2.U, 1.U), 0.U)
-    lsqCtrl.io.enq.req(i).valid := dispatch.io.toLsDq.req(i).fire
+    lsqCtrl.io.enq.req(i).valid := dispatch.io.toLsDq.req(i).valid && lsDq.io.enq.canAccept
     lsqCtrl.io.enq.req(i).bits := dispatch.io.toLsDq.req(i).bits
 
     lsDq.io.enq.req(i).valid := dispatch.io.toLsDq.req(i).valid && lsqCtrl.io.enq.canAccept
