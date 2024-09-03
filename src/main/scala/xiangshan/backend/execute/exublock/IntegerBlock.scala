@@ -36,11 +36,12 @@ import xiangshan.FuType
 
 class IntegerBlock(implicit p:Parameters) extends BasicExuBlock {
   val alus = Seq.tabulate(aluNum)(idx => LazyModule(new AluComplex(idx, 0)))
+  val aluStds = Seq.tabulate(aluStdNum)(idx => LazyModule(new AluStdComplex(idx, 0)))
   val bruJmpMiscs = Seq.tabulate(bruJmpMiscNum)(idx => LazyModule(new BruJmpMiscComplex(idx, 0)))
   val aluMuls = Seq.tabulate(aluMulNum)(idx => LazyModule(new AluMulComplex(idx, 0)))
   val aluMulDivStds = Seq.tabulate(aluMulDivStdNum)(idx => LazyModule(new AluMulDivStdComplex(idx, 0)))
 
-  val intComplexes = alus ++ aluMuls ++ bruJmpMiscs ++ aluMulDivStds
+  val intComplexes = alus ++ aluMuls ++ bruJmpMiscs ++ aluMulDivStds ++ aluStds
   intComplexes.foreach(exucx => {
     exucx.issueNode :*= issueNode
     writebackNode :=* exucx.writebackNode
@@ -55,6 +56,7 @@ class IntegerBlockImp(outer:IntegerBlock) extends BasicExuBlockImp(outer){
     val issueToMou = Decoupled(new ExuInput)
     val writebackFromMou = Flipped(Decoupled(new ExuOutput))
     val prefetchI = Output(Valid(UInt(p(XSCoreParamsKey).XLEN.W)))
+    val stdWbToMem = Decoupled(new ExuOutput)
   })
 
   val fence = Module(new Fence)
@@ -70,6 +72,7 @@ class IntegerBlockImp(outer:IntegerBlock) extends BasicExuBlockImp(outer){
 
   fence.io.out.ready := true.B
   csr.io.out.ready := true.B
+  io.stdWbToMem <> outer.aluStds.head.module.io.writebackToSQ
 
   val miscNum = outer.bruJmpMiscs.length
   println("intBlock has " + miscNum + " misc")

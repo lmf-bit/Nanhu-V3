@@ -39,6 +39,7 @@ import xiangshan.backend.rob.{Rob, RobCSRIO, RobLsqIO, RobPtr, RollBackList}
 import xiangshan.backend.issue.DqDispatchNode
 import xiangshan.backend.execute.fu.csr.vcsr._
 import xs.utils.perf.HasPerfLogging
+import xiangshan.FuType
 
 class CtrlToFtqIO(implicit p: Parameters) extends XSBundle {
   val rob_commits = Vec(CommitWidth, Valid(new RobCommitInfo))
@@ -144,7 +145,7 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
 
   //Dispatch
   private val dispatch = Module(new Dispatch)
-  private val memDispatch2Rs = Module(new MemDispatch2Rs)
+  //private val memDispatch2Rs = Module(new MemDispatch2Rs)
 
   //DispatchQueue
   private val intDq = Module(new DispatchQueue(RenameWidth * 2, RenameWidth, intDispatch._2.bankNum))
@@ -159,7 +160,8 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
   private val vCtrlBlock = Module(new VectorCtrlBlock(vdWidth, vpdWidth, mempdWidth))
   io.debug_vec_rat := vCtrlBlock.io.debug
 
-  private val memDqArb = Module(new MemDispatchArbiter(coreParams.rsBankNum))
+  // private val memDqArb = Module(new MemDispatchArbiter(coreParams.rsBankNum))
+  private val lsqCtrl = Module(new LsqEnqCtrl)
   private val wbMergeBuffer = outer.wbMergeBuffer.module
   vCtrlBlock.io.splitCtrl.allDone := RegNext(wbMergeBuffer.io.splitCtrl.allDone)
   vCtrlBlock.io.splitCtrl.allowNext := RegNext(wbMergeBuffer.io.splitCtrl.allowNext)
@@ -417,27 +419,62 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
 
   dispatch.io.hartId := io.hartId
   dispatch.io.redirect := redirectDelay
-  intDq.io.enq.req := dispatch.io.toIntDq.req
+
+  private val redirectDelay_dup_4 = Pipe(io.redirectIn)
+  lsqCtrl.io.redirect := redirectDelay_dup_4
+  lsqCtrl.io.lcommit := io.lqDeq
+  lsqCtrl.io.scommit := io.sqDeq
+  lsqCtrl.io.lqCancelCnt := io.lqCancelCnt
+  lsqCtrl.io.sqCancelCnt := io.sqCancelCnt
+  lsqCtrl.io.enqLsq <> io.enqLsq
+  lsqCtrl.io.lsqVecDeqIO <> io.lsqVecDeqCnt
+
+  val dpIsStore = dispatch.io.toLsDq.req.map(_.bits.ctrl.fuType).map(dp => FuType.isStore(dp))
+  val dpIsLs = dispatch.io.toLsDq.req.map(_.bits.ctrl.fuType).map(dp => FuType.isLoadStore(dp))
+
+  for (i <- dispatch.io.toLsDq.req.indices) {
+    lsqCtrl.io.enq.needAlloc(i) := Mux(dispatch.io.toLsDq.req(i).valid && dpIsLs(i), Mux(dpIsStore(i), 2.U, 1.U), 0.U)
+    lsqCtrl.io.enq.req(i).valid := dispatch.io.toLsDq.req(i).fire
+    lsqCtrl.io.enq.req(i).bits := dispatch.io.toLsDq.req(i).bits
+
+    lsDq.io.enq.req(i).valid := dispatch.io.toLsDq.req(i).valid && lsqCtrl.io.enq.canAccept
+    lsDq.io.enq.req(i).bits := dispatch.io.toLsDq.req(i).bits
+    lsDq.io.enq.req(i).bits.lqIdx := lsqCtrl.io.enq.resp(i).lqIdx
+    lsDq.io.enq.req(i).bits.sqIdx := lsqCtrl.io.enq.resp(i).sqIdx
+  }
+
+  intDq.io.enq.req.zip(fpDq.io.enq.req).zipWithIndex.foreach {
+    case ((dpi, dpf), idx) => {
+      dpi.valid := dispatch.io.toIntDq.req(idx).valid && ((dpIsStore(idx) && lsqCtrl.io.enq.canAccept) || !dpIsStore(idx))
+      dpi.bits := dispatch.io.toIntDq.req(idx).bits
+      dpi.bits.lqIdx := lsqCtrl.io.enq.resp(idx).lqIdx
+      dpi.bits.sqIdx := lsqCtrl.io.enq.resp(idx).sqIdx
+      
+      dpf.valid := dispatch.io.toFpDq.req(idx).valid && ((dpIsStore(idx) && lsqCtrl.io.enq.canAccept) || !dpIsStore(idx))
+      dpf.bits := dispatch.io.toFpDq.req(idx).bits
+      dpf.bits.lqIdx := lsqCtrl.io.enq.resp(idx).lqIdx
+      dpf.bits.sqIdx := lsqCtrl.io.enq.resp(idx).sqIdx
+    }
+  }
+
   intDq.io.enq.needAlloc := dispatch.io.toIntDq.needAlloc
-  fpDq.io.enq.req := dispatch.io.toFpDq.req
   fpDq.io.enq.needAlloc := dispatch.io.toFpDq.needAlloc
-  lsDq.io.enq.req := dispatch.io.toLsDq.req
   lsDq.io.enq.needAlloc := dispatch.io.toLsDq.needAlloc
   for (i <- 1 until DecodeWidth) {
     dispatch.io.toIntDq.canAccept(i) := intDq.io.enq.canAccept_dup(i-1)
     dispatch.io.toFpDq.canAccept(i) := fpDq.io.enq.canAccept_dup(i-1)
-    dispatch.io.toLsDq.canAccept(i) := lsDq.io.enq.canAccept_dup(i-1)
+    dispatch.io.toLsDq.canAccept(i) := lsDq.io.enq.canAccept_dup(i-1) && lsqCtrl.io.enq.canAccept
   }
   dispatch.io.toIntDq.canAccept(0) := intDq.io.enq.canAccept
   dispatch.io.toFpDq.canAccept(0) := fpDq.io.enq.canAccept
-  dispatch.io.toLsDq.canAccept(0) := lsDq.io.enq.canAccept
+  dispatch.io.toLsDq.canAccept(0) := lsDq.io.enq.canAccept && lsqCtrl.io.enq.canAccept
   dispatch.io.allocPregs <> io.allocPregs
 //  dispatch.io.singleStep := RegNext(io.csrCtrl.singlestep)
   dispatch.io.vstart := RegNext(io.vstart)
 
   private val redirectDelay_dup_0 = Pipe(io.redirectIn)
   private val redirectDelay_dup_3 = Pipe(io.redirectIn)
-  private val redirectDelay_dup_4 = Pipe(io.redirectIn)
+  
   intDq.io.redirect := redirectDelay_dup_0
   intDq.io.redirect_dup := redirectDelay_dup_3
   fpDq.io.redirect := redirectDelay_dup_0
@@ -447,21 +484,24 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
 
   intDq.io.deq <> intDeq
   fpDq.io.deq <> fpDeq
+  lsDq.io.deq <> lsDeq
+
+  vCtrlBlock.io.vmemDispatch := DontCare
 
   //mem and vmem dispatch merge
-  memDqArb.io.memIn <> lsDq.io.deq
-  memDqArb.io.vmemIn <> vCtrlBlock.io.vmemDispatch
-  memDqArb.io.redirect := redirectDelay
+  // memDqArb.io.memIn <> lsDq.io.deq
+  // memDqArb.io.vmemIn <> vCtrlBlock.io.vmemDispatch
+  // memDqArb.io.redirect := redirectDelay
 
-  memDispatch2Rs.io.redirect := redirectDelay_dup_4
-  memDispatch2Rs.io.lcommit := io.lqDeq
-  memDispatch2Rs.io.scommit := io.sqDeq
-  memDispatch2Rs.io.lqCancelCnt := io.lqCancelCnt
-  memDispatch2Rs.io.sqCancelCnt := io.sqCancelCnt
-  memDispatch2Rs.io.enqLsq <> io.enqLsq
-  memDispatch2Rs.io.in <> memDqArb.io.toMem2RS //lsDq.io.deq
-  memDispatch2Rs.io.lsqVecDeqCnt <> io.lsqVecDeqCnt
-  lsDeq <> memDispatch2Rs.io.out
+  // memDispatch2Rs.io.redirect := redirectDelay_dup_4
+  // memDispatch2Rs.io.lcommit := io.lqDeq
+  // memDispatch2Rs.io.scommit := io.sqDeq
+  // memDispatch2Rs.io.lqCancelCnt := io.lqCancelCnt
+  // memDispatch2Rs.io.sqCancelCnt := io.sqCancelCnt
+  // memDispatch2Rs.io.enqLsq <> io.enqLsq
+  // memDispatch2Rs.io.in <> memDqArb.io.toMem2RS //lsDq.io.deq
+  // memDispatch2Rs.io.lsqVecDeqCnt <> io.lsqVecDeqCnt
+  // lsDeq <> memDispatch2Rs.io.out
 
   rob.io.hartId := io.hartId
   rob.io.mmuEnable := io.mmuEnable

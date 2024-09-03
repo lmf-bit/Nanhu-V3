@@ -280,12 +280,44 @@ object FuConfigs{
     trigger = true,
     exceptionOut = Seq(storeAddrMisaligned, storeAccessFault, storePageFault, fdiUStoreAccessFault)
   )
-
-  val stdCfg = FuConfig(
-    name = "std",
+  
+  val stdiCfg = FuConfig(
+    name = "stdi",
     fuType = FuType.std,
     numIntSrc = 1,
+    numFpSrc = 0,
+    numVecSrc = 0,
+    writeIntRf = false,
+    writeFpRf = false,
+    writeVecRf = false,
+    writeFflags = false,
+    writeVxsat = false,
+    latency = Int.MaxValue,
+    trigger = false,
+    hasRedirect = false
+  )
+
+  val stdfCfg = FuConfig(
+    name = "stdf",
+    fuType = FuType.std,
+    numIntSrc = 0,
     numFpSrc = 1,
+    numVecSrc = 0,
+    writeIntRf = false,
+    writeFpRf = false,
+    writeVecRf = false,
+    writeFflags = false,
+    writeVxsat = false,
+    latency = Int.MaxValue,
+    trigger = false,
+    hasRedirect = false
+  )
+
+  val stdvCfg = FuConfig(
+    name = "stdv",
+    fuType = FuType.std,
+    numIntSrc = 0,
+    numFpSrc = 0,
     numVecSrc = 1,
     writeIntRf = false,
     writeFpRf = false,

@@ -19,17 +19,19 @@
  ****************************************************************************************/
 package xiangshan.backend.execute.exublock
 
-import chisel3.util.Pipe
+import chisel3.util._
 import org.chipsalliance.cde.config.Parameters
 import chisel3._
-import xiangshan.backend.execute.exucx.{FmaDivComplex, FmaMiscComplex, FmacComplex}
+import xiangshan.backend.execute.exucx.{FmaDivComplex, FmaMiscComplex, FmacComplex, FmacStdComplex}
 import freechips.rocketchip.diplomacy.LazyModule
+import xiangshan._
 
 class FloatingBlock(implicit p:Parameters) extends BasicExuBlock{
   private val fmacs = Seq.tabulate(fmaNum)(idx => LazyModule(new FmacComplex(idx)))
+  private val fmacStds = Seq.tabulate(fmaStdNum)(idx => LazyModule(new FmacStdComplex(idx)))
   private val fmacDivs = Seq.tabulate(fmaDivNum)(idx => LazyModule(new FmaDivComplex(idx)))
   private val fmaMiscs = Seq.tabulate(fmaMiscNum)(idx => LazyModule(new FmaMiscComplex(idx)))
-  private val fpComplexes = fmacs ++ fmacDivs ++ fmaMiscs
+  private val fpComplexes = fmacs ++ fmacDivs ++ fmaMiscs ++ fmacStds
   fpComplexes.foreach(exucx => {
     exucx.issueNode :*= issueNode
     writebackNode :=* exucx.writebackNode
@@ -38,10 +40,13 @@ class FloatingBlock(implicit p:Parameters) extends BasicExuBlock{
   class Impl extends BasicExuBlockImp(this){
     val io = IO(new Bundle{
       val csr_frm: UInt = Input(UInt(3.W))
+      val stdWbToMem = Decoupled(new ExuOutput)
     })
+    io.stdWbToMem <> fmacStds.head.module.io.writebackToSQ
     fpComplexes.foreach(_.module.redirectIn := Pipe(redirectIn))
     fmacs.foreach(_.module.csr_frm := RegNext(io.csr_frm))
     fmacDivs.foreach(_.module.csr_frm := RegNext(io.csr_frm))
     fmaMiscs.foreach(_.module.csr_frm := RegNext(io.csr_frm))
+    fmacStds.foreach(_.module.csr_frm := RegNext(io.csr_frm))
   }
 }

@@ -108,17 +108,17 @@ class MemBlock(implicit p: Parameters) extends BasicExuBlock
       writebackToVms = false
     )
   })
-  private val stdParams = Seq.tabulate(exuParameters.StuCnt)(idx => {
-    ExuConfig(
-      name = "StdExu",
-      id = idx,
-      complexName = "MemComplex",
-      fuConfigs = Seq(FuConfigs.stdCfg),
-      exuType = ExuType.std,
-      writebackToRob = true,
-      writebackToVms = false
-    )
-  })
+  // private val stdParams = Seq.tabulate(exuParameters.StuCnt)(idx => {
+  //   ExuConfig(
+  //     name = "StdExu",
+  //     id = idx,
+  //     complexName = "MemComplex",
+  //     fuConfigs = Seq(FuConfigs.stdCfg),
+  //     exuType = ExuType.std,
+  //     writebackToRob = true,
+  //     writebackToVms = false
+  //   )
+  // })
 //  private val slduParams = Seq.tabulate(exuParameters.LduCnt)(idx => {ExuConfig(
 //    name = "SpecialLduExu",
 //    id = idx,
@@ -129,17 +129,17 @@ class MemBlock(implicit p: Parameters) extends BasicExuBlock
 //    writebackToVms = false
 //  )})
 
-  private val vstdParams = Seq.tabulate(exuParameters.StuCnt)(idx => {
-    ExuConfig(
-      name = "vStdExu",
-      id = idx,
-      complexName = "MemComplex",
-      fuConfigs = Seq(FuConfigs.stdCfg),
-      exuType = ExuType.std,
-      writebackToRob = false,
-      writebackToVms = true
-    )
-  })
+  // private val vstdParams = Seq.tabulate(1)(idx => {
+  //   ExuConfig(
+  //     name = "vStdExu",
+  //     id = idx,
+  //     complexName = "MemComplex",
+  //     fuConfigs = Seq(FuConfigs.stdvCfg),
+  //     exuType = ExuType.stdv,
+  //     writebackToRob = false,
+  //     writebackToVms = true
+  //   )
+  // })
   private val vstaParams = Seq.tabulate(exuParameters.StuCnt)(idx => {
     ExuConfig(
       name = "vStaExu",
@@ -168,23 +168,22 @@ class MemBlock(implicit p: Parameters) extends BasicExuBlock
 //  val slduIssueNodes: Seq[MemoryBlockIssueNode] = slduParams.zipWithIndex.map(e => new MemoryBlockIssueNode(e._1, e._2))
   val lduIssueNodes: Seq[MemoryBlockIssueNode] = lduParams.zipWithIndex.map(e => new MemoryBlockIssueNode(e._1, e._2))
   val staIssueNodes: Seq[ExuInputNode] = staParams.zipWithIndex.map(e => new ExuInputNode(e._1))
-  val stdIssueNodes: Seq[ExuInputNode] = stdParams.zipWithIndex.map(e => new ExuInputNode(e._1))
+  // val stdIssueNodes: Seq[ExuInputNode] = stdParams.zipWithIndex.map(e => new ExuInputNode(e._1))
 
   val lduWritebackNodes: Seq[ExuOutputNode] = lduParams.map(e => new ExuOutputNode(e))
   val vlduWritebackNodes: Seq[ExuOutputNode] = vlduParams.map(e => new ExuOutputNode(e))
   val staWritebackNodes: Seq[ExuOutputNode] = staParams.map(new ExuOutputNode(_))
   val vstaWritebackNodes: Seq[ExuOutputNode] = vstaParams.map(new ExuOutputNode(_))
-  val stdWritebackNodes: Seq[ExuOutputNode] = stdParams.map(new ExuOutputNode(_))
-  val vstdWritebackNodes: Seq[ExuOutputNode] = vstdParams.map(new ExuOutputNode(_))
+  // val stdWritebackNodes: Seq[ExuOutputNode] = stdParams.map(new ExuOutputNode(_))
+  // val vstdWritebackNodes: Seq[ExuOutputNode] = vstdParams.map(new ExuOutputNode(_))
 
   val memIssueRouters: Seq[MemIssueRouter] = Seq.fill(2)(LazyModule(new MemIssueRouter))
-  memIssueRouters.zip(staIssueNodes).zip(stdIssueNodes).foreach({case((mir, sta), std) =>
+  memIssueRouters.zip(staIssueNodes).foreach({case (mir, sta) =>
 //    ldu :*= mir.node
     sta :*= mir.node
-    std :*= mir.node
   })
 
-  private val allWritebackNodes = lduWritebackNodes ++ staWritebackNodes ++ stdWritebackNodes
+  private val allWritebackNodes = lduWritebackNodes ++ staWritebackNodes
 
   memIssueRouters.foreach(mir => mir.node :*= issueNode)
   lduIssueNodes.foreach(_ :*= issueNode)
@@ -223,11 +222,6 @@ class MemBlockImp(outer: MemBlock) extends BasicExuBlockImp(outer)
     require(iss.in.length == 1)
     iss.in.head._1
   })
-  private val stdIssues = outer.stdIssueNodes.map(iss => {
-    require(iss.in.length == 1)
-    iss.in.head._1
-  })
-
   private val lduWritebacks = outer.lduWritebackNodes.map(wb => {
     require(wb.out.length == 1)
     wb.out.head._1
@@ -244,14 +238,10 @@ class MemBlockImp(outer: MemBlock) extends BasicExuBlockImp(outer)
     require(wb.out.length == 1)
     wb.out.head._1
   })
-  private val stdWritebacks = outer.stdWritebackNodes.map(wb => {
-    require(wb.out.length == 1)
-    wb.out.head._1
-  })
-  private val vstdWritebacks = outer.vstdWritebackNodes.map(wb => {
-    require(wb.out.length == 1)
-    wb.out.head._1
-  })
+  // private val vstdWritebacks = outer.vstdWritebackNodes.map(wb => {
+  //   require(wb.out.length == 1)
+  //   wb.out.head._1
+  // })
 
   val io = IO(new Bundle {
     val hartId = Input(UInt(8.W))
@@ -283,6 +273,9 @@ class MemBlockImp(outer: MemBlock) extends BasicExuBlockImp(outer)
 //    val earlyWakeUpCancel = Output(Vec(3, Vec(lduIssues.length, Bool())))
     val issueToMou = Flipped(Decoupled(new ExuInput))
     val writebackFromMou = Decoupled(new ExuOutput)
+
+    val stdWbFromInt = Flipped(DecoupledIO(new ExuOutput))
+    val stdWbFromFp = Flipped(DecoupledIO(new ExuOutput))
 
     val sqFull = Output(Bool())
     val lqFull = Output(Bool())
@@ -319,8 +312,7 @@ class MemBlockImp(outer: MemBlock) extends BasicExuBlockImp(outer)
 
   private val loadUnits = Seq.fill(exuParameters.LduCnt)(Module(new LoadUnit))
   private val storeUnits = Seq.fill(exuParameters.StuCnt)(Module(new StoreUnit))
-  private val stdUnits = Seq.fill(exuParameters.StuCnt)(Module(new Std))
-  private val stData = stdUnits.map(_.io.out)
+  private val stData = Seq(io.stdWbFromInt, io.stdWbFromFp)
   
   val l1_pf_req = Wire(Decoupled(new L1PrefetchReq()))
   val prefetcherOpt: Option[BasePrefecher] = coreParams.prefetcher match {
@@ -430,9 +422,8 @@ class MemBlockImp(outer: MemBlock) extends BasicExuBlockImp(outer)
   private val redirectInDelay = Pipe(redirectIn)
   private val ldExeWbReqs = loadUnits.map(_.io.ldout)
   private val staExeWbReqs = storeUnits.map(_.io.stout)
-  private val stdExeWbReqs = stdUnits.map(_.io.out)
-  (lduWritebacks ++ staWritebacks ++ stdWritebacks)
-    .zip(ldExeWbReqs ++ staExeWbReqs ++ stdExeWbReqs)
+  (lduWritebacks ++ staWritebacks)
+    .zip(ldExeWbReqs ++ staExeWbReqs)
     .foreach({case(wb, out) =>
       wb.valid := out.valid && !out.bits.uop.ctrl.isVector
       wb.bits := out.bits
@@ -440,8 +431,8 @@ class MemBlockImp(outer: MemBlock) extends BasicExuBlockImp(outer)
       out.ready := true.B
   })
 
-  (vlduWritebacks ++ vstaWritebacks ++ vstdWritebacks)
-    .zip(ldExeWbReqs ++ staExeWbReqs ++ stdExeWbReqs)
+  (vlduWritebacks ++ vstaWritebacks)
+    .zip(ldExeWbReqs ++ staExeWbReqs)
     .foreach({case(vwb, vout) =>
       vwb.valid := vout.valid && vout.bits.uop.ctrl.isVector
       vwb.bits := vout.bits
@@ -581,10 +572,10 @@ class MemBlockImp(outer: MemBlock) extends BasicExuBlockImp(outer)
   val memFDIResp = storeUnits.map(_.io.fdiResp) ++ loadUnits.map(_.io.fdiResp)
 
   for( (dchecker,index) <- fdiCheckersIOs.zipWithIndex){
-     dchecker.enableFDI := fdi.io.enableFDI
-     dchecker.resource := fdi.io.entries
-     dchecker.req := memFDIReq(index)
-     memFDIResp(index) := dchecker.resp
+    dchecker.enableFDI := fdi.io.enableFDI
+    dchecker.resource := fdi.io.entries
+    dchecker.req := memFDIReq(index)
+    memFDIResp(index) := dchecker.resp
   }
 
   // pmp
@@ -765,9 +756,6 @@ class MemBlockImp(outer: MemBlock) extends BasicExuBlockImp(outer)
   // StoreUnit
   for (i <- 0 until exuParameters.StuCnt) {
     val stu = storeUnits(i)
-
-    stdUnits(i).io.in <> stdIssues(i).issue
-    stdUnits(i).io.redirect := Pipe(redirectIn)
 
     loadUnits.foreach({req =>
       req.io.storeViolationQuery(i) := stu.io.storeViolationQuery

@@ -126,13 +126,13 @@ class RegFileTop(extraScalarRfReadPort: Int)(implicit p:Parameters) extends Lazy
     })
 
     private val intReadNum = needIntSrc.map(_._2.intSrcNum).sum
-    private val fpReadNum = needFpSrc.filterNot(_._2.hasStd).map(_._2.fpSrcNum).sum
-    private val stdFpReadNum = needFpSrc.filter(_._2.hasStd).map(_._2.fpSrcNum).sum
+    private val fpReadNum = needFpSrc.map(_._2.fpSrcNum).sum
+    // private val stdFpReadNum = needFpSrc.filter(_._2.hasStd).map(_._2.fpSrcNum).sum
 
     println(s"intReadNum: $intReadNum, fpReadNum: $fpReadNum")
 
     private val intRf = Module(new GenericRegFile(NRPhyRegs, writeIntRf.length, writeIntRfBypass.length, intReadNum, extraScalarRfReadPort, XLEN, "IntegerRegFile", true))
-    private val fpRf = Module(new GenericRegFile(NRPhyRegs, writeFpRf.length, writeFpRfBypass.length, fpReadNum, extraScalarRfReadPort + stdFpReadNum, XLEN, "FloatingRegFile", false))
+    private val fpRf = Module(new GenericRegFile(NRPhyRegs, writeFpRf.length, writeFpRfBypass.length, fpReadNum, extraScalarRfReadPort, XLEN, "FloatingRegFile", false))
 
     private val intWriteBackSinks = intRf.io.write ++ intRf.io.bypassWrite
     private val intWriteBackSources = writeIntRf ++ writeIntRfBypass
@@ -165,19 +165,6 @@ class RegFileTop(extraScalarRfReadPort: Int)(implicit p:Parameters) extends Lazy
       prefix(s"${exuComplexParam.name}_${exuComplexParam.id}") {
         val exuInBundle = WireInit(bi.issue.bits)
         exuInBundle.src := DontCare
-
-        // if(exuComplexParam.hasJmp){
-        //   val issueBundle = WireInit(bi.issue.bits)
-        //   intRf.io.read(intRfReadIdx).addr := bi.issue.bits.uop.psrc(0)
-        //   issueBundle.src(0) := intRf.io.read(intRfReadIdx).data
-        //   io.pcReadAddr(pcReadPortIdx) := bi.issue.bits.uop.cf.ftqPtr.value
-        //   io.pcReadAddr(pcReadPortIdx + 1) := (bi.issue.bits.uop.cf.ftqPtr + 1.U).value
-        //   val instrPc = io.pcReadData(pcReadPortIdx).getPc(bi.issue.bits.uop.cf.ftqOffset)
-        //   val jalrTarget = io.pcReadData(pcReadPortIdx + 1).startAddr
-        //   exuInBundle := ImmExtractor(exuComplexParam, issueBundle, Some(instrPc), Some(jalrTarget), Some(io.mmuEnable))
-        //   intRfReadIdx = intRfReadIdx + 1
-        //   pcReadPortIdx = pcReadPortIdx + 2
-        // } 
         if(exuComplexParam.isBruJmpMisc){
           val issueBundle = WireInit(bi.issue.bits)
           val srcNum = exuComplexParam.intSrcNum
@@ -209,7 +196,7 @@ class RegFileTop(extraScalarRfReadPort: Int)(implicit p:Parameters) extends Lazy
             d := fpRf.io.read(fpRfReadIdx).data
             fpRfReadIdx = fpRfReadIdx + 1
           }
-        } else if(exuComplexParam.isMemType && (exuComplexParam.isSta || exuComplexParam.isStd)){
+        } else if(exuComplexParam.isMemType && (exuComplexParam.isSta)){
           println("exuComplexParam = " + exuComplexParam)
 
           val issueBundle = WireInit(bi.issue.bits)
@@ -218,18 +205,18 @@ class RegFileTop(extraScalarRfReadPort: Int)(implicit p:Parameters) extends Lazy
           // sta std
           intRf.io.read(intRfReadIdx).addr := bi.issue.bits.uop.psrc(0)
           // std fp
-          fpRf.io.readNoBypass(noBypassFpReadIdx).addr := bi.issue.bits.uop.psrc(0)
+          // fpRf.io.readNoBypass(noBypassFpReadIdx).addr := bi.issue.bits.uop.psrc(0)
 
           issueBundle.src(0) := intRf.io.read(intRfReadIdx).data
           exuInBundle := ImmExtractor(exuComplexParam, issueBundle)
           exuInBundle.uop.loadStoreEnable := true.B
 
-          val iDataReg = RegEnable(intRf.io.read(intRfReadIdx).data, bi.issue.fire && isStd)
-          val fDataReg = RegEnable(fpRf.io.readNoBypass(noBypassFpReadIdx).data, bi.issue.fire && isStd)
-          val selReg = RegNext(SrcType.isFp(bi.issue.bits.uop.ctrl.srcType(0)))
-          exuInBundle.src(1) := Mux(selReg, fDataReg, iDataReg)
+          //val iDataReg = RegEnable(intRf.io.read(intRfReadIdx).data, bi.issue.fire && isStd)
+          //val fDataReg = RegEnable(fpRf.io.readNoBypass(noBypassFpReadIdx).data, bi.issue.fire && isStd)
+          //val selReg = RegNext(SrcType.isFp(bi.issue.bits.uop.ctrl.srcType(0)))
+          //exuInBundle.src(1) := Mux(selReg, fDataReg, iDataReg)
 
-          noBypassFpReadIdx = noBypassFpReadIdx + 1
+          //noBypassFpReadIdx = noBypassFpReadIdx + 1
           intRfReadIdx = intRfReadIdx + 1
         } else if(exuComplexParam.isMemType && exuComplexParam.isLdu){
           val issueBundle = WireInit(bi.issue.bits)

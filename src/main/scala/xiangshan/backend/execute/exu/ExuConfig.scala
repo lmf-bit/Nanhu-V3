@@ -21,39 +21,53 @@ package xiangshan.backend.execute.exu
 
 import xiangshan.backend.execute.fu.FuConfig
 import chisel3._
-object ExuType{
+object ExuType {
+  // Exu Pipeline: 00->int, 01->fp, 10->mem, 11->vector
+  // Int: 'b00000 -> 'b00110
   def jmp   = 0
   def alu   = 1
   def mul   = 2
   def div   = 3
-  def ldu   = 4
-  def sta   = 5
-  def std   = 6
-  def fmisc = 7
-  def fmac  = 8
-  def fdiv  = 9
-  def valu  = 10
-  def vmac  = 11
-  def vfp   = 12
-  def vdiv  = 13
-  def vperm = 14
-  def s2v   = 15
-  def sldu  = 16
-  def vmask = 17
-  def misc  = 18
-  def bru   = 19
+  def bru   = 4
+  def misc  = 5
+  def stdi  = 6
+
+  // Fp: 'b01000 -> 'b01011
+  def fmisc = 8
+  def fmac  = 9
+  def fdiv  = 10
+  def stdf  = 11
+
+  // Mem: 'b10000 -> 'b10001
+  def ldu   = 16
+  def sta   = 17
+  def stdv  = 18
+  
+  // Vector: 'b11000->'b11111
+  def valu  = 24
+  def vmac  = 25
+  def vfp   = 26
+  def vdiv  = 27
+  def vperm = 28
+  def s2v   = 29
+  def sldu  = 30
+  def vmask = 31
+  
 
   private val mapping = Map(
     jmp   -> "jmp",
     alu   -> "alu",
     mul   -> "mul",
     div   -> "div",
-    ldu   -> "ldu",
-    sta   -> "sta",
-    std   -> "std",
+    bru   -> "bru",
+    misc  -> "misc",
+    stdi  -> "stdi",
     fmisc -> "fmisc",
     fmac  -> "fmac",
     fdiv  -> "fdiv",
+    stdf  -> "stdf",
+    ldu   -> "ldu",
+    sta   -> "sta",
     valu  -> "valu",
     vfp   -> "vfp",
     vdiv  -> "vdiv",
@@ -62,15 +76,14 @@ object ExuType{
     s2v   -> "s2v",
     sldu  -> "sldu",
     vmask -> "vmask",
-    misc  -> "misc",
-    bru   -> "bru"
+    stdv  -> "stdv"
   )
 
-  def intTypes: Seq[Int] = Seq(alu, mul, div, jmp, misc, bru)
-  def memTypes: Seq[Int] = Seq(ldu, sta, std, sldu)
-  def fpTypes: Seq[Int] = Seq(fmisc, fmac, fdiv)
+  def intTypes: Seq[Int] = Seq(jmp, alu, mul, div, bru, misc, stdi)
+  def memTypes: Seq[Int] = Seq(ldu, sta, sldu)
+  def fpTypes: Seq[Int] = Seq(fmisc, fmac, fdiv, stdf)
   def vecTypes: Seq[Int] = Seq(vfp, valu, vperm, vmac, vdiv, s2v)
-  def typeToString(in:Int):String = mapping(in)
+  def typeToString(in:Int): String = mapping(in)
   def bypassIntList: Seq[Int] = Seq(alu, mul, ldu, jmp, bru)
   def bypassFpList: Seq[Int] = Seq(fmac)
 }
@@ -102,7 +115,7 @@ case class ExuConfig
   val writeFFlags: Boolean = fuConfigs.map(_.writeFflags).reduce(_ || _)
 
   private val isVector = throughVectorRf
-  private val isLs = exuType == ExuType.ldu || exuType == ExuType.sta || exuType == ExuType.std
+  private val isLs = exuType == ExuType.ldu || exuType == ExuType.sta
   val writebackToRegfile = if(isLs) !isVector && (writeIntRf || writeFpRf) else (writeIntRf || writeFpRf)
   val writebackToIntRs = if(isLs) (!isVector && writeIntRf) else (writeIntRf && !isIntFastWakeup)
   val writebackToFpRs = if(isLs) (!isVector && writeFpRf) else (writeFpRf && !isFpFastWakeup)
