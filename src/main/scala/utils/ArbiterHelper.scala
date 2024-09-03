@@ -18,6 +18,7 @@ package utils
 
 import chisel3._
 import chisel3.util._
+import xiangshan.XSBundle
 import xiangshan.cache._
 
 object ArbiterCtrl {
@@ -32,7 +33,7 @@ object ArbiterCtrl {
   * Priority is given to lower producer.
   * if any producer's cache block addr matches the one of chosen producer, the producer will be served
   *
-  * @param gen data type, must have addr which indicates physical address
+  * @param req data type, must have addr which indicates physical address
   * @param n number of inputs
   * @param offset_width cache line offset width
   * @param paddr_bits how many bits in paddr
@@ -44,8 +45,8 @@ object ArbiterCtrl {
   * consumer.io.in <> arb.io.out
   * }}}
   */
-class ArbiterFilterByCacheLineAddr[T <: MissReqWoStoreData](val gen: T, val n: Int, val offset_width: Int, val paddr_bits: Int) extends Module{
-  val io = IO(new ArbiterIO(gen, n))
+class ArbiterFilterByCacheLineAddr[T <: MissReqWoStoreData](val req: MissReq, val n: Int, val offset_width: Int, val paddr_bits: Int) extends Module{
+  val io = IO(new ArbiterIO(req, n))
 
   io.chosen := (n - 1).asUInt
   io.out.bits := io.in(n - 1).bits

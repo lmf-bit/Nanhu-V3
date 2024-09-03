@@ -81,6 +81,7 @@ class LoadUnit(implicit p: Parameters) extends XSModule
     // S1/S2: cache query and response in next cycle
     val dcache = new DCacheLoadIO
     val lduForwardMSHR = new LduForwardFromMSHR
+    val s1_ldRob = ValidIO(new RobPtr)  //from load s1 to DCache
     // S1/S2: forward query to sbuffer and response in next cycle
     val forwardFromSBuffer = new LoadForwardQueryIO
     // S1/S2: FDI req and response in next cycle
@@ -288,6 +289,8 @@ class LoadUnit(implicit p: Parameters) extends XSModule
   val s1_paddr_dup_dcache = s1_dtlbResp.bits.paddr(1)
   io.dcache.s1_paddr_dup_lsu := s1_paddr_dup_lsu
   io.dcache.s1_paddr_dup_dcache := s1_paddr_dup_dcache
+  io.s1_ldRob.valid := s1_out.valid
+  io.s1_ldRob.bits := s1_out.bits.uop.robIdx
 
   val s1_enableMem = s1_in.bits.uop.loadStoreEnable
   val s1_hasException = Mux(s1_enableMem && s1_in.valid, ExceptionNO.selectByFu(s1_out.bits.uop.cf.exceptionVec, lduCfg).asUInt.orR, false.B)
