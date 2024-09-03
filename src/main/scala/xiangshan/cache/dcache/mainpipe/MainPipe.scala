@@ -862,6 +862,11 @@ class MainPipe(implicit p: Parameters) extends DCacheModule with HasPerfEvents w
 
   XSPerfAccumulate("fake_tag_write_intend", io.tag_write_intend && !io.tag_write.valid)
   XSPerfAccumulate("mainpipe_tag_write", io.tag_write.valid)
+  XSPerfAccumulate("store_set_conflict", store_set_conflict && !store_req.ready)
+  XSPerfAccumulate("probe_or_replace_block_store", !store_req.ready && (io.probe_req.valid || !io.replace_req.valid))
+  XSPerfAccumulate("mainpipe_slot_conflict_1_2", (s1_idx === s2_idx && s1_way_en === s2_way_en && s1_req.refill && s2_req.refill && s1_valid && s2_valid ))
+  XSPerfAccumulate("mainpipe_slot_conflict_1_3", (s1_idx === s3_idx && s1_way_en === s3_way_en && s1_req.refill && s3_req.refill && s1_valid && s3_valid))
+  XSPerfAccumulate("mainpipe_slot_conflict_2_3", (s2_idx === s3_idx && s2_way_en === s3_way_en && s2_req.refill && s3_req.refill && s2_valid && s3_valid))
 
   assert(!RegNext(io.tag_write.valid && !io.tag_write_intend))
 
@@ -945,6 +950,9 @@ class MainPipe(implicit p: Parameters) extends DCacheModule with HasPerfEvents w
   io.forwardRegState(3).valid := s3_valid && !s3_req.probe && (s3_req.source =/= STORE_SOURCE.U)
   io.forwardRegState(3).paddr := s3_req.addr
   io.forwardRegState(3).data := s3_store_data_merged.asUInt
+
+  XSPerfAccumulate("mainpipe_update_prefetchArray", io.prefetch_flag_write.valid)
+
 
   val perfEvents = Seq(
     ("dcache_mp_req          ", s0_fire                                                      ),

@@ -222,4 +222,8 @@ class StoreUnit(implicit p: Parameters) extends XSModule with HasPerfLogging {
 
   printPipeLine(s0_out.bits, s0_out.valid, "S0")
   printPipeLine(s1_out.bits, s1_out.valid, "S1")
+
+  XSPerfAccumulate("s1_in_valid",                s1_in.valid)
+  XSPerfAccumulate("s1_in_fire",                 s1_out.fire)
+  XSPerfAccumulate("s1_tlb_miss",                 s1_out.fire && s1_tlb_miss)
 }

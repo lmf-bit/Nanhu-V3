@@ -649,6 +649,10 @@ class LoadUnit(implicit p: Parameters) extends XSModule
     io.ldout.bits.uop.ctrl.replayInst := s3_need_replay_from_fetch
   }
 
+  XSPerfAccumulate("s3_forward_fail", io.ldout.valid && s3_forward_fail)
+  XSPerfAccumulate("s3_ldld_violation", io.ldout.valid && s3_ldld_violation)
+  XSPerfAccumulate("s3_need_replay_from_fetch", io.ldout.valid && s3_need_replay_from_fetch)
+
   io.mmioWb.ready := !hitLoadOut.valid
 
   val lastValidData = RegEnable(io.ldout.bits.data, io.ldout.fire)
@@ -758,13 +762,18 @@ class LoadUnit(implicit p: Parameters) extends XSModule
 
 
   XSPerfAccumulate("NHV5_load_issueFromRs", io.rsIssueIn.fire)
+  XSPerfAccumulate("NHV5_load_issueFromRs_block", !io.rsIssueIn.ready && io.rsIssueIn.valid)
   XSPerfAccumulate("NHV5_load_issueFromReplay", io.replayQIssueIn.fire)
+  XSPerfAccumulate("NHV5_load_issueFromReplay_block", !io.replayQIssueIn.ready && io.replayQIssueIn.valid)
+  XSPerfAccumulate("NHV5_load_fastReplayIn", io.fastReplayIn.fire)
   XSPerfAccumulate("NHV5_MSHR_forward_valid", io.lduForwardMSHR.resp.valid)
+  XSPerfAccumulate("s0_stall_dcache", s0_valid && !io.dcache.req.ready)
 
   XSPerfAccumulate("NHV5_load_s0_fromRs_requireTLB", io.tlb.req.fire && !s0_out.bits.replay.isReplayQReplay)
   XSPerfAccumulate("NHV5_load_s0_fromRs_requireDcache", io.dcache.req.fire && !s0_out.bits.replay.isReplayQReplay)
   XSPerfAccumulate("NHV5_load_s0_fromRq_requireTLB", io.tlb.req.fire && s0_out.bits.replay.isReplayQReplay)
   XSPerfAccumulate("NHV5_load_s0_fromRq_requireDcache", io.dcache.req.fire && s0_out.bits.replay.isReplayQReplay)
+  
 
   val s1_perfValidCounting = s1_out.valid && !(ExceptionNO.selectByFu(s1_out.bits.uop.cf.exceptionVec, lduCfg).asUInt.orR) &&
   (!s1_isSoftPrefetch) && s1_enableMem && !s1_out.bits.uop.robIdx.needFlush(redirectReg("loadS1"))
@@ -773,6 +782,10 @@ class LoadUnit(implicit p: Parameters) extends XSModule
   XSPerfAccumulate("NHV5_load_s1_fromRs_RarCheckRedo", s1_needLdVioCheckRedo && s1_perfValidCounting && !s1_out.bits.replay.isReplayQReplay)
   XSPerfAccumulate("NHV5_load_s1_fromRs_BankConflict", s1_bank_conflict && s1_perfValidCounting && !s1_out.bits.replay.isReplayQReplay)
   XSPerfAccumulate("NHV5_load_s1_fromRs_DcacheNotRdy", s1_cancel_inner && s1_perfValidCounting && !s1_out.bits.replay.isReplayQReplay)
+
+  XSPerfAccumulate("s1_in_valid",                  s1_perfValidCounting)
+  XSPerfAccumulate("s1_tlb_miss",                  s1_perfValidCounting && s1_tlb_miss)
+  XSPerfAccumulate("s1_tlb_miss_first_issue",      s1_perfValidCounting && s1_tlb_miss && s1_in.bits.isFirstIssue)
 
   XSPerfAccumulate("NHV5_load_s1_fromRq_TLBMiss", s1_tlb_miss && s1_perfValidCounting && s1_out.bits.replay.isReplayQReplay)
   XSPerfAccumulate("NHV5_load_s1_fromRq_HasRawVio", s1_hasStLdViolation && s1_perfValidCounting && s1_out.bits.replay.isReplayQReplay)
@@ -787,6 +800,13 @@ class LoadUnit(implicit p: Parameters) extends XSModule
   XSPerfAccumulate("NHV5_load_s2_fromRs_FwdFail", s2_data_invalid && s2_perfValidCounting && !s2_out.bits.replay.isReplayQReplay)
   XSPerfAccumulate("NHV5_load_s2_fromRs_DcacheMshrFull", s2_cache_replay && s2_perfValidCounting && !s2_out.bits.replay.isReplayQReplay)
   XSPerfAccumulate("NHV5_load_s2_fromRs_HasRawVio", s2_hasStLdViolation && s2_perfValidCounting && !s2_out.bits.replay.isReplayQReplay)
+
+  XSPerfAccumulate("s2_in_valid",                  s2_perfValidCounting)
+  XSPerfAccumulate("s2_in_fire_first_issue",       s2_perfValidCounting && s2_in.bits.isFirstIssue)
+  XSPerfAccumulate("s2_dcache_miss",               s2_perfValidCounting && io.dcache.resp.bits.miss)
+  XSPerfAccumulate("s2_dcache_miss_first_issue",   s2_perfValidCounting && io.dcache.resp.bits.miss && s2_in.bits.isFirstIssue)
+  XSPerfAccumulate("s2_full_forward",              s2_perfValidCounting && s2_fullForward)
+  XSPerfAccumulate("s2_successfully_forward_mshr", s2_perfValidCounting && io.lduForwardMSHR.resp.valid)
 
   XSPerfAccumulate("dcache_mshrFull", s2_cache_replay && s2_cache_replay_with_mshrFull && s2_out.valid)
   XSPerfAccumulate("dcache_enq_conflict", s2_cache_replay && s2_cache_replay_with_conflict &&  s2_out.valid)
