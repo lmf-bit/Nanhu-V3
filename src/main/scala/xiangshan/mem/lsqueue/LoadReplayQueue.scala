@@ -849,13 +849,21 @@ class LoadReplayQueue(enablePerf: Boolean)(implicit p: Parameters) extends XSMod
   }
 
   if(enablePerf){
-    XSPerfAccumulate("replayQ_first_enq_times", enqNumber)
+    XSPerfAccumulate("enq", enqNumber)
+    XSPerfAccumulate("deq", deqNumber)
+    XSPerfAccumulate("deq_block", deqBlockCount)
     XSPerfAccumulate("replayQ_multi_replay_enq_times", enqIsReplayQReplayNumber)
-    XSPerfAccumulate("replayQ_deq_times", deqNumber)
     XSPerfAccumulate("replayQ_full", io.replayQFull)
 
-    XSPerfAccumulate("replay_cause_raw_nack",      replayRAWRejectCount)
-    XSPerfAccumulate("replay_cause_tlb_miss",      replayTlbMissCount)
+    XSPerfAccumulate("replay_raw_nack", replayRAWRejectCount)
+    XSPerfAccumulate("replay_nuke", replayNukeCount)
+    XSPerfAccumulate("replay_tlb_miss", replayTlbMissCount)
+    XSPerfAccumulate("replay_bank_conflict", replayBankConflictCount)
+    XSPerfAccumulate("replay_dcache_replay", replayDCacheReplayCount)
+    XSPerfAccumulate("replay_forward_fail", replayForwardFailCount)
+    XSPerfAccumulate("replay_dcache_miss", replayDCacheMissCount)
+    // XSPerfAccumulate("replay_hint_wakeup", s0_hintSelValid)
+    // XSPerfAccumulate("replay_hint_priority_beat1", io.l2_hint.valid && io.l2_hint.bits.isKeyword)
     XSPerfAccumulate("replay_cause_bank_conflict", replayBankConflictCount)
     XSPerfAccumulate("replay_cause_dcache_replay", replayDCacheReplayCount)
     XSPerfAccumulate("replay_cause_forward_fail",  replayForwardFailCount)

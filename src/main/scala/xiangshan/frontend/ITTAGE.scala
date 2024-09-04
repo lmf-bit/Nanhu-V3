@@ -314,9 +314,6 @@ abstract class BaseITTage(implicit p: Parameters) extends BasePredictor with ITT
 class ITTage(implicit p: Parameters) extends BaseITTage {
   override val meta_size = 0.U.asTypeOf(new ITTageMeta).getWidth
 
-  // val s1_uftbHit = io.in.bits.resp_in(0).s1_uftbHit
-  // val s1_uftbHasIndirect = io.in.bits.resp_in(0).s1_uftbHasIndirect
-  // val s1_isIndirect = s1_uftbHasIndirect
 
   val tables = ITTageTableInfos.zipWithIndex.map {
     case ((nRows, histLen, tagLen), i) =>
@@ -333,7 +330,7 @@ class ITTage(implicit p: Parameters) extends BaseITTage {
   // uftb miss or hasIndirect
   val s1_uftbHit = io.in.bits.resp_in(0).s1_uftbHit
   val s1_uftbHasIndirect = io.in.bits.resp_in(0).s1_uftbHasIndirect
-  val s1_isIndirect = (!s1_uftbHit && !io.in.bits.resp_in(0).s1_ftbCloseReq) || s1_uftbHasIndirect
+  val s1_isIndirect = (!s1_uftbHit) || s1_uftbHasIndirect
 
   // Keep the table responses to process in s2
   val s0_fire = io.s0_fire(dupForIttage)

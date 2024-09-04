@@ -527,7 +527,7 @@ class BranchPredictionResp(implicit p: Parameters) extends XSBundle with HasBPUC
   
   val s1_uftbHit = Bool()
   val s1_uftbHasIndirect = Bool()
-  val s1_ftbCloseReq = Bool()
+  // val s1_ftbCloseReq = Bool()
 
   val topdown_info = new FrontendTopDownBundle
 

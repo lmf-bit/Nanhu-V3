@@ -19,9 +19,9 @@ rex_assert_begin = re.compile("\$error\(")
 rex_assert_body = re.compile("Assertion failed")
 rex_assert_end = re.compile("\);")
 
-def alter_print_info(file_queue:Queue[str]):
+def alter_print_info(file_queue:Queue):
   if(file_queue.empty()):
-    return Queue[str]()
+    return Queue()
   assertion_queue = Queue()
   res_queue = Queue()
 
