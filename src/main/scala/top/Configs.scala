@@ -241,7 +241,7 @@ class WithNKBL2
         )),
         reqField = Seq(xs.utils.tl.ReqSourceField()),
         echoField = Seq(coupledL2.DirtyField()),
-        elaboratedTopDown = false,
+        elaboratedTopDown = true,
         enablePerf = false,
         hasMbist = p.hasMbist,
         prefetch = Some(coupledL2.prefetch.PrefetchReceiverParams()),
