@@ -166,6 +166,10 @@ class XSTileImp(outer: XSTile)(implicit p: Parameters) extends LazyModuleImp(out
     val cpu_halt = Output(Bool())
     val dfx_reset = Input(new DFTResetSignals())
     val XStileResetGate = Input(Bool())
+    val debugTopDown = new Bundle {
+      val robHeadPaddr = Valid(UInt(PAddrBits.W))
+      val l3MissMatch = Input(Bool())
+    }
   })
   val ireset = reset
   dontTouch(io.hartId)
@@ -210,7 +214,8 @@ class XSTileImp(outer: XSTile)(implicit p: Parameters) extends LazyModuleImp(out
   else {
     outer.core.module.io.perfEvents <> DontCare
   }
-
+  outer.core.module.io.debugTopDown.l3MissMatch := io.debugTopDown.l3MissMatch
+  io.debugTopDown.robHeadPaddr := outer.core.module.io.debugTopDown.robHeadPaddr
   outer.misc.module.beu_errors.icache <> outer.core.module.io.beu_errors.icache
   outer.misc.module.beu_errors.dcache <> outer.core.module.io.beu_errors.dcache
   // TODO: replace Coupled L2

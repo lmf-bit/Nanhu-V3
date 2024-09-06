@@ -94,7 +94,7 @@ class XSCoreImp(outer: XSCore) extends LazyModuleImp(outer)
       // val robTrueCommit = Output(UInt(64.W))
       val robHeadPaddr = Valid(UInt(PAddrBits.W))
       val l2MissMatch = Input(Bool())
-      // val l3MissMatch = Input(Bool())
+      val l3MissMatch = Input(Bool())
     }
   })
 
@@ -170,6 +170,7 @@ class XSCoreImp(outer: XSCore) extends LazyModuleImp(outer)
   io.debugTopDown.robHeadPaddr := ctrlBlock.io.debugTopDown.fromRob.robHeadPaddr
   ctrlBlock.io.debugTopDown.fromCore.fromMem <> exuBlock.io.debugTopDown.toCore
   ctrlBlock.io.debugTopDown.fromCore.l2MissMatch <> io.debugTopDown.l2MissMatch
+  ctrlBlock.io.debugTopDown.fromCore.l3MissMatch <> io.debugTopDown.l3MissMatch
   ctrlBlock.io.robio.lsTopdownInfo <> exuBlock.io.debugTopDown.lsTopdownInfo
   ctrlBlock.io.robio.robHeadLsIssue := exuBlock.io.debugTopDown.robHeadLsIssue
   exuBlock.io.debugTopDown.robDeqPtr := ctrlBlock.io.robio.robDeqPtr

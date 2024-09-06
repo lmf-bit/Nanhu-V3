@@ -54,7 +54,10 @@ class XSTop()(implicit p: Parameters) extends BaseXSSoc() with HasSoCParameter {
 
   val l3cacheOpt = soc.L3CacheParamsOpt.map(l3param =>
     LazyModule(new HuanCun("L3_")(new Config((_, _, _) => {
-      case HCCacheParamsKey => l3param.copy(enableTopDown = debugOpts.EnableTopDown)
+      case HCCacheParamsKey => l3param.copy(
+        hartIds = tiles.map(_.HartId),
+        enableTopDown = debugOpts.EnableTopDown
+        )
       case DebugOptionsKey => p(DebugOptionsKey)
     })))
   )
@@ -121,6 +124,13 @@ class XSTop()(implicit p: Parameters) extends BaseXSSoc() with HasSoCParameter {
     case Some(l3) =>
       misc.l3_out :*= l3.node :*= TLBuffer.chainNode(2) :*= misc.l3_banked_xbar
     case None =>
+  }
+  l3cacheOpt match {
+    case Some(l3) =>
+      l3.module.io.debugTopDown.robHeadPaddr := core_with_l2.map(_.module.io.debugTopDown.robHeadPaddr)
+      core_with_l2.zip(l3.module.io.debugTopDown.addrMatch).foreach { case (tile, l3Match) => tile.module.io.debugTopDown.l3MissMatch := l3Match }
+    case None =>
+      core_with_l2.foreach(_.module.io.debugTopDown.l3MissMatch := false.B)
   }
 
   lazy val module = new Impl

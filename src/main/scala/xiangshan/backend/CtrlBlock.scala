@@ -52,7 +52,7 @@ class CtrlToFtqIO(implicit p: Parameters) extends XSBundle {
 }
 class CoreDispatchTopDownIO extends Bundle {
   val l2MissMatch = Input(Bool())
-  // val l3MissMatch = Input(Bool())
+  val l3MissMatch = Input(Bool())
   val fromMem = Flipped(new MemCoreTopDownIO)
 }
 class CtrlBlock(implicit p: Parameters) extends LazyModule with HasXSParameter {
