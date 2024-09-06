@@ -125,13 +125,6 @@ class XSTop()(implicit p: Parameters) extends BaseXSSoc() with HasSoCParameter {
       misc.l3_out :*= l3.node :*= TLBuffer.chainNode(2) :*= misc.l3_banked_xbar
     case None =>
   }
-  l3cacheOpt match {
-    case Some(l3) =>
-      l3.module.io.debugTopDown.robHeadPaddr := core_with_l2.map(_.module.io.debugTopDown.robHeadPaddr)
-      core_with_l2.zip(l3.module.io.debugTopDown.addrMatch).foreach { case (tile, l3Match) => tile.module.io.debugTopDown.l3MissMatch := l3Match }
-    case None =>
-      core_with_l2.foreach(_.module.io.debugTopDown.l3MissMatch := false.B)
-  }
 
   lazy val module = new Impl
 
@@ -232,6 +225,13 @@ class XSTop()(implicit p: Parameters) extends BaseXSSoc() with HasSoCParameter {
       if (l3cacheOpt.get.module.dfx_reset.isDefined) {
         l3cacheOpt.get.module.dfx_reset.get := dfx
       }
+    }
+    l3cacheOpt match {
+      case Some(l3) =>
+        l3.module.io.debugTopDown.robHeadPaddr := core_with_l2.map(_.module.io.debugTopDown.robHeadPaddr)
+        core_with_l2.zip(l3.module.io.debugTopDown.addrMatch).foreach { case (tile, l3Match) => tile.module.io.debugTopDown.l3MissMatch := l3Match }
+      case None =>
+        core_with_l2.foreach(_.module.io.debugTopDown.l3MissMatch := false.B)
     }
 
     misc.module.debug_module_io.resetCtrl.hartIsInReset := core_with_l2.map(_.module.ireset.asBool)
