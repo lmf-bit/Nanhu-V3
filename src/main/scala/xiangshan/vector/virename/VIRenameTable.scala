@@ -73,11 +73,15 @@ class VIRenameTable(implicit p: Parameters) extends VectorBaseModule {
     val update = Input(Vec(VIRenameWidth, Valid(new Bundle {
       val addr = UInt(3.W)
       val data = new RatUpdateEntry
+      // for snapshots
+      val snpt = Input(new SnapshotPort)
     })))
     val doUpdate = Input(Bool())
     val commit      = Input(new VIRatCommitPort)
     val redirect = Flipped(ValidIO(new Redirect))
     val debug  = Output(Vec(32, UInt(VIPhyRegIdxWidth.W))) //for difftest
+    // for snapshots
+    val snpt = Input(new SnapshotPort)
   })
   //RAT
   private val rat_ds = VecInit.tabulate(32)(i => i.U(VIPhyRegIdxWidth.W))
@@ -87,6 +91,9 @@ class VIRenameTable(implicit p: Parameters) extends VectorBaseModule {
   private val updateEntryBits = Reg(Vec(8, new RatUpdateEntry))
   private val updateEntryValidNext = WireInit(updateEntryValid)
   private val updateEntryBitsNext = WireInit(updateEntryBits)
+
+  //snapshots
+  val snapshots = SnapshotGenerator(sRAT, io.snpt.snptEnq, io.snpt.snptDeq, io.redirect.valid, io.snpt.flushVec)
 
   io.debug := aRAT
 
@@ -142,7 +149,8 @@ class VIRenameTable(implicit p: Parameters) extends VectorBaseModule {
   //Walk write has priority: write with bigger idx will overwrite ones with smaller.
   for (i <- 0 until 8) {
     when(io.commit.doWalk && io.commit.mask(i)) {
-      sRAT(io.commit.lrIdx(i)) := io.commit.prIdxNew(i)
+      //use snapshot to update sRAT
+      sRAT(io.commit.lrIdx(i)) := Mux(io.snpt.useSnpt,snapshots(io.snpt.snptSelect)(i),io.commit.prIdxNew(i))
     }
   }
   //Commit write has priority: write with bigger idx will overwrite ones with smaller.

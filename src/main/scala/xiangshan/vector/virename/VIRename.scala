@@ -48,6 +48,10 @@ class VIRename(implicit p: Parameters) extends VectorBaseModule {
     val rabCommit = Input(new RabCommitIO)
     val exception = Input(Valid(new ExceptionInfo))
     val debug = Output(Vec(32, UInt(VIPhyRegIdxWidth.W)))
+    // for snapshots
+    val snpt = Input(new SnapshotPort)
+    val snptLastEnq = Flipped(ValidIO(new RobPtr))
+    val snptIsFull= Input(Bool())
   })
 
   val freeList        = Module(new VIFreeList)
@@ -130,6 +134,11 @@ class VIRename(implicit p: Parameters) extends VectorBaseModule {
       rlb.bits.newPhyRegIdx := freeList.io.allocatePhyReg(i)
     }
   }
+
+  //send snapshot to renameTable/freeList/vrob
+  renameTable.io.snpt:=io.snpt
+  freeList.io.snpt:=io.snpt
+  vrob.io.snpt:=io.snpt
 
   //-------------------------------------------- TODO: commit & walk --------------------------------------------
   private val rollbackDelay = vrob.io.commit.rat.Pipe

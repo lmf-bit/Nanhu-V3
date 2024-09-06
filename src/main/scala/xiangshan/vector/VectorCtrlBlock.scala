@@ -69,8 +69,11 @@ class VectorCtrlBlock(vecDpWidth: Int, vpDpWidth: Int, memDpWidth: Int)(implicit
 
     val splitCtrl = new SplitCtrlIO
     val exception = Input(Valid(new ExceptionInfo))
-
     val debug = Output(Vec(32, UInt(VIPhyRegIdxWidth.W)))
+    // for snapshots
+    val snpt = Input(new SnapshotPort)
+    val snptLastEnq = Flipped(ValidIO(new RobPtr))
+    val snptIsFull= Input(Bool())
   })
 
   val vdecode    = Module(new VDecode)
@@ -118,6 +121,15 @@ class VectorCtrlBlock(vecDpWidth: Int, vpDpWidth: Int, memDpWidth: Int)(implicit
   virename.io.commit      <> io.commit
   virename.io.rabCommit   <> io.rabCommit
   virename.io.exception := io.exception
+  //send snapshot to virename
+  virename.io.snpt.snptEnq := io.snpt.snptEnq
+  virename.io.snpt.snptDeq := io.snpt.snptDeq
+  virename.io.snpt.useSnpt := io.snpt.useSnpt
+  virename.io.snpt.snptSelect := io.snpt.snptSelect
+  virename.io.snptIsFull := io.snptIsFull
+  virename.io.snpt.flushVec := io.snpt.flushVec
+  virename.io.snptLastEnq.valid := io.snptLastEnq.valid
+  virename.io.snptLastEnq.bits := io.snptLastEnq.bits
 
   for((rp, dp) <- virename.io.rename.map(_.out) zip dispatch.io.req.uop) {
     rp.ready := dispatch.io.req.canDispatch

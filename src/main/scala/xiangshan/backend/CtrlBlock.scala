@@ -359,6 +359,17 @@ class CtrlBlockImp(outer: CtrlBlock)(implicit p: Parameters) extends LazyModuleI
   rat.io.snpt.snptSelect := snptSelect
   rat.io.snpt.flushVec := flushVec
 
+  //send snpt signal to vCtrlblock
+  vCtrlBlock.io.snpt.snptEnq := genSnapshot
+  vCtrlBlock.io.snpt.snptDeq := snpt.io.deq
+  vCtrlBlock.io.snpt.useSnpt := useSnpt
+  vCtrlBlock.io.snpt.snptSelect := snptSelect
+  vCtrlBlock.io.snptIsFull := snpt.io.valids.asUInt.andR
+  vCtrlBlock.io.snpt.flushVec := flushVecNext
+  vCtrlBlock.io.snptLastEnq.valid := !isEmpty(snpt.io.enqPtr, snpt.io.deqPtr)
+  vCtrlBlock.io.snptLastEnq.bits := snpt.io.snapshots((snpt.io.enqPtr - 1.U).value).robIdx.head
+
+
   //vector instr from scalar
   require(RenameWidth == VIDecodeWidth)
   vCtrlBlock.io.fromVtpRn := rename.io.toVCtl
