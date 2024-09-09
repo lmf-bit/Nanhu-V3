@@ -740,13 +740,14 @@ class LoadUnit(implicit p: Parameters) extends XSModule
   io.debug_ls.replayCnt := 1.U
 
   // Topdown
+  val s2_topdown_cache_miss = s2_dcacheResp.bits.topDownMiss && s2_dcacheResp.valid
   io.lsTopdownInfo.s1.robIdx          := s1_in.bits.uop.robIdx.value
   io.lsTopdownInfo.s1.vaddr_valid     := s1_in.fire
   io.lsTopdownInfo.s1.vaddr_bits      := s1_in.bits.vaddr
   io.lsTopdownInfo.s2.robIdx          := s2_in.bits.uop.robIdx.value
   io.lsTopdownInfo.s2.paddr_valid     := s2_in.fire && !RegNext(s1_tlb_miss)
   io.lsTopdownInfo.s2.paddr_bits      := s2_in.bits.paddr
-  io.lsTopdownInfo.s2.first_real_miss := s2_cache_miss
+  io.lsTopdownInfo.s2.first_real_miss := s2_topdown_cache_miss
   io.lsTopdownInfo.s2.cache_miss_en   := s2_in.fire && !RegNext(s1_tlb_miss)
 
   val perfEvents = Seq(

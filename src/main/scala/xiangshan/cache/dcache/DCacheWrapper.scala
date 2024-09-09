@@ -331,6 +331,7 @@ class BaseDCacheWordResp(implicit p: Parameters) extends DCacheBundle
 
   // cache req missed, send it to miss queue
   val miss   = Bool()
+  val topDownMiss = Bool()
   // cache miss, and failed to enter the missqueue, replay from RS is needed
   val replay = Bool()
   val mshr_full = Bool()
