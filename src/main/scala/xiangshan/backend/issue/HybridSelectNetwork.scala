@@ -41,7 +41,7 @@ class OldestSelectPolicy(inputNum:Int, haveEqual:Boolean)(implicit p: Parameters
     (interRes, idx)
   }
 
-  private val res = ParallelOperationN(io.in.zipWithIndex.map(in => (in._1, (1L << in._2).U(inputNum.W))), 8, ReductionFunc)
+  private val res = ParallelOperationN(io.in.zipWithIndex.map(in => (in._1, UIntToOH(in._2.U))), 8, ReductionFunc)
   io.out.valid := res._1.valid
   io.out.bits := res._2
 }
