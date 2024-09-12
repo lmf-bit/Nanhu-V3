@@ -165,10 +165,10 @@ class IntegerReservationStationImpl(outer:IntegerReservationStation, param:RsPar
   private val miscExuCfg  = miscIssue.flatMap(_._2.exuConfigs).filter(_.exuType == ExuType.misc).head
   private val bruExuCfg   = bruIssue.flatMap(_._2.exuConfigs).filter(_.exuType == ExuType.bru).head
 
-  private val aluSelectNetwork = Module(new OldestSelectNetworkInt(param.bankNum, entriesNumPerBank, aluIssuePortNum, aluExuCfg, true, Some(s"IntAluSelNetwork")))
-  private val mulSelectNetwork = Module(new OldestSelectNetworkInt(param.bankNum, entriesNumPerBank, mulIssuePortNum, mulExuCfg, true, Some(s"IntMulSelNetwork")))
-  private val jmpSelectNetwork = Module(new OldestSelectNetworkInt(param.bankNum, entriesNumPerBank, jmpIssuePortNum, jmpExuCfg, false, Some(s"IntJmpSelNetwork")))
-  private val bruSelectNetwork = Module(new OldestSelectNetworkInt(param.bankNum, entriesNumPerBank, bruIssuePortNum, bruExuCfg, false, Some(s"IntBruSelNetwork")))
+  private val aluSelectNetwork = Module(new HybridSelectNetwork(param.bankNum, entriesNumPerBank, aluIssuePortNum, aluExuCfg, true, Some(s"IntAluSelNetwork")))
+  private val mulSelectNetwork = Module(new HybridSelectNetwork(param.bankNum, entriesNumPerBank, mulIssuePortNum, mulExuCfg, true, Some(s"IntMulSelNetwork")))
+  private val jmpSelectNetwork = Module(new HybridSelectNetwork(param.bankNum, entriesNumPerBank, jmpIssuePortNum, jmpExuCfg, false, Some(s"IntJmpSelNetwork")))
+  private val bruSelectNetwork = Module(new HybridSelectNetwork(param.bankNum, entriesNumPerBank, bruIssuePortNum, bruExuCfg, false, Some(s"IntBruSelNetwork")))
   private val divSelectNetwork = Module(new SelectNetwork(param.bankNum, entriesNumPerBank, divIssuePortNum, divExuCfg, false, true, false, Some(s"IntDivSelNetwork")))
   private val miscSelectNetwork = Module(new SelectNetwork(param.bankNum, entriesNumPerBank, miscIssuePortNum, miscExuCfg, false, false, false, Some(s"IntMiscSelNetwork")))
   divSelectNetwork.io.tokenRelease.get.zip(wakeup.filter(_._2.exuType == ExuType.div).map(_._1)).foreach({ case(sink, source) => sink := source})

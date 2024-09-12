@@ -207,7 +207,7 @@ class MemoryReservationStationImpl(outer:MemoryReservationStation, param:RsParam
 
   private val staSelectNetwork = Module(new HybridSelectNetwork(param.bankNum, entriesNumPerBank, staIssuePortNum, staExuCfg, true, Some(s"MemStaSelNetwork")))
   private val stdSelectNetwork = Module(new HybridSelectNetwork(param.bankNum, entriesNumPerBank, stdIssuePortNum, stdExuCfg, true, Some(s"MemStdSelNetwork")))
-  private val lduSelectNetwork = Module(new OldestSelectNetwork_TMP(param.bankNum, entriesNumPerBank, lduIssuePortNum, lduExuCfg, true, Some(s"MemLduSelNetwork")))
+  private val lduSelectNetwork = Module(new HybridSelectNetwork(param.bankNum, entriesNumPerBank, lduIssuePortNum, lduExuCfg, true, Some(s"MemLduSelNetwork")))
 
   private val uopReadNum = stIssue.length + ldIssue.length
   require(uopReadNum == 4)
