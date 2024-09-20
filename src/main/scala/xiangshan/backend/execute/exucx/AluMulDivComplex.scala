@@ -23,11 +23,10 @@ import xiangshan.backend.execute.exu.{ExuType, AluExu, MulExu, DivExu}
 import xiangshan._
 import chisel3.util._
 
-class AluMulDivStdComplex(id: Int, bypassNum:Int)(implicit p:Parameters) extends BasicExuComplex{
-  val alu = LazyModule(new AluExu(id, "AluMulDivStdComplex", bypassNum))
-  val mul = LazyModule(new MulExu(id, "AluMulDivStdComplex", bypassNum))
-  val div = LazyModule(new DivExu(id, "AluMulDivStdComplex", bypassNum))
-  //TODO: now has not the FakeStd
+class AluMulDivComplex(id: Int, bypassNum:Int)(implicit p:Parameters) extends BasicExuComplex{
+  val alu = LazyModule(new AluExu(id, "AluMulDivComplex", bypassNum))
+  val mul = LazyModule(new MulExu(id, "AluMulDivComplex", bypassNum))
+  val div = LazyModule(new DivExu(id, "AluMulDivComplex", bypassNum))
 
   alu.issueNode :*= issueNode
   mul.issueNode :*= issueNode
@@ -37,10 +36,10 @@ class AluMulDivStdComplex(id: Int, bypassNum:Int)(implicit p:Parameters) extends
   writebackNode :=* mul.writebackNode
   writebackNode :=* div.writebackNode
 
-  lazy val module = new AluMulDivStdComplexImp(this, id, bypassNum)
+  lazy val module = new AluMulDivComplexImp(this, id, bypassNum)
 }
 
-class AluMulDivStdComplexImp(outer:AluMulDivStdComplex, id:Int, bypassNum:Int) extends BasicExuComplexImp(outer, bypassNum){
+class AluMulDivComplexImp(outer:AluMulDivComplex, id:Int, bypassNum:Int) extends BasicExuComplexImp(outer, bypassNum){
     require(outer.issueNode.in.length == 1)
     require(outer.issueNode.out.length == 3)
     private val issueIn = outer.issueNode.in.head._1

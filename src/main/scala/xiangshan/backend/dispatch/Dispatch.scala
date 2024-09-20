@@ -186,15 +186,17 @@ class Dispatch(implicit p: Parameters) extends XSModule with HasPerfEvents with 
     // send uops to dispatch queues
     // Note that if one of their previous instructions cannot enqueue, they should not enter dispatch queue.
     val doesNotNeedExec = io.fromRename(i).bits.eliminatedMove
-    io.toIntDq.needAlloc(i) := io.fromRename(i).valid && isInt(i) && !doesNotNeedExec
-    io.toIntDq.req(i).valid := io.fromRename(i).valid && isInt(i) && !doesNotNeedExec &&
+    io.toIntDq.needAlloc(i) := io.fromRename(i).valid && ((isInt(i) && !doesNotNeedExec) || (isStore(i) && io.fromRename(i).bits.ctrl.srcType(1) === SrcType.reg))
+    io.toIntDq.req(i).valid := io.fromRename(i).valid && ((isInt(i) && !doesNotNeedExec) || (isStore(i) && io.fromRename(i).bits.ctrl.srcType(1) === SrcType.reg)) &&
       canEnterDpq && io.toFpDq.canAccept(2) && io.toLsDq.canAccept(2) && !vstartHold
     io.toIntDq.req(i).bits := updatedUop(i)
+    io.toIntDq.req(i).bits.ctrl.fuType := Mux(isStore(i), FuType.std, updatedUop(i).ctrl.fuType)
 
-    io.toFpDq.needAlloc(i) := io.fromRename(i).valid && isFp(i)
-    io.toFpDq.req(i).valid := io.fromRename(i).valid && isFp(i) &&
+    io.toFpDq.needAlloc(i) := io.fromRename(i).valid && (isFp(i) || (isStore(i) && io.fromRename(i).bits.ctrl.srcType(1) === SrcType.fp))
+    io.toFpDq.req(i).valid := io.fromRename(i).valid && (isFp(i) || (isStore(i) && io.fromRename(i).bits.ctrl.srcType(1) === SrcType.fp)) &&
       canEnterDpq && io.toLsDq.canAccept(2) && io.toIntDq.canAccept(2) && !vstartHold
     io.toFpDq.req(i).bits := updatedUop(i)
+    io.toFpDq.req(i).bits.ctrl.fuType := Mux(isStore(i), FuType.std, updatedUop(i).ctrl.fuType)
 
     io.toLsDq.needAlloc(i) := io.fromRename(i).valid && isMem(i)
     io.toLsDq.req(i).valid := io.fromRename(i).valid && isMem(i) &&
@@ -297,7 +299,7 @@ class Dispatch(implicit p: Parameters) extends XSModule with HasPerfEvents with 
   val enqFireCnt = PopCount(io.toIntDq.req.map(_.valid && io.toIntDq.canAccept(0))) +
     PopCount(io.toFpDq.req.map(_.valid && io.toFpDq.canAccept(0))) +
     PopCount(io.toLsDq.req.map(_.valid && io.toLsDq.canAccept(0)))
-  XSError(enqFireCnt > renameFireCnt, "enqFireCnt should not be greater than renameFireCnt\n")
+  // XSError(enqFireCnt > renameFireCnt, "enqFireCnt should not be greater than renameFireCnt\n")
   XSPerfAccumulate("in", Mux(RegNext(io.fromRename(0).ready), PopCount(io.fromRename.map(_.valid)), 0.U))
   XSPerfAccumulate("empty", !hasValidInstr)
   XSPerfAccumulate("utilization", PopCount(io.fromRename.map(_.valid)))

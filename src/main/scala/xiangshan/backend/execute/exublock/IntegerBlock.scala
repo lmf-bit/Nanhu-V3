@@ -36,11 +36,12 @@ import xiangshan.FuType
 
 class IntegerBlock(implicit p:Parameters) extends BasicExuBlock {
   val alus = Seq.tabulate(aluNum)(idx => LazyModule(new AluComplex(idx, 0)))
-  val bruJmpMiscs = Seq.tabulate(bruJmpMiscNum)(idx => LazyModule(new BruJmpMiscComplex(idx, 0)))
+  val aluStds = Seq.tabulate(aluStdNum)(idx => LazyModule(new AluStdComplex(idx, 0)))
   val aluMuls = Seq.tabulate(aluMulNum)(idx => LazyModule(new AluMulComplex(idx, 0)))
-  val aluMulDivStds = Seq.tabulate(aluMulDivStdNum)(idx => LazyModule(new AluMulDivStdComplex(idx, 0)))
+  val aluMulDivs = Seq.tabulate(aluMulDivNum)(idx => LazyModule(new AluMulDivComplex(idx, 0)))
+  val bruJmpMiscs = Seq.tabulate(bruJmpMiscNum)(idx => LazyModule(new BruJmpMiscComplex(idx, 0)))
 
-  val intComplexes = alus ++ aluMuls ++ bruJmpMiscs ++ aluMulDivStds
+  val intComplexes = alus ++ aluStds ++ aluMuls ++ bruJmpMiscs ++ aluMulDivs
   intComplexes.foreach(exucx => {
     exucx.issueNode :*= issueNode
     writebackNode :=* exucx.writebackNode
@@ -55,6 +56,7 @@ class IntegerBlockImp(outer:IntegerBlock) extends BasicExuBlockImp(outer){
     val issueToMou = Decoupled(new ExuInput)
     val writebackFromMou = Flipped(Decoupled(new ExuOutput))
     val prefetchI = Output(Valid(UInt(p(XSCoreParamsKey).XLEN.W)))
+    val stdWbToMem = Decoupled(new ExuOutput)
   })
 
   val fence = Module(new Fence)
@@ -70,6 +72,8 @@ class IntegerBlockImp(outer:IntegerBlock) extends BasicExuBlockImp(outer){
 
   fence.io.out.ready := true.B
   csr.io.out.ready := true.B
+
+  io.stdWbToMem <> outer.aluStds.head.module.io.writebackToSQ
 
   val miscNum = outer.bruJmpMiscs.length
   println("intBlock has " + miscNum + " misc")
@@ -159,7 +163,7 @@ class IntegerBlockImp(outer:IntegerBlock) extends BasicExuBlockImp(outer){
   io.csrio.customCtrl                   := DelayN(csr.csrio.customCtrl, 2)
   csr.csrio.exception                   := Pipe(io.csrio.exception)
 
-  outer.aluMulDivStds.foreach(_.module.io.csr_frm := csr.csrio.fpu.frm)
+  outer.aluMulDivs.foreach(_.module.io.csr_frm := csr.csrio.fpu.frm)
   outer.aluMuls.foreach(_.module.io.csr_frm := csr.csrio.fpu.frm)
 
   private val jmps = outer.bruJmpMiscs.map(_.module)

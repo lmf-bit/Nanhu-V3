@@ -37,7 +37,7 @@ object ImmExtractor {
       res
     } else if (cfg.hasMul) {
       Mux(in.uop.ctrl.fuType === FuType.bku, BkuImmExtractor(in), AluImmExtractor(in))
-    } else if (cfg.hasDiv || cfg.hasMisc || cfg.isAlu) {
+    } else if (cfg.hasDiv || cfg.hasMisc || cfg.hasAlu) {
       AluImmExtractor(in)
     } else if (cfg.hasLoad || cfg.hasSpecialLoad) {
       LoadImmExtractor(in)

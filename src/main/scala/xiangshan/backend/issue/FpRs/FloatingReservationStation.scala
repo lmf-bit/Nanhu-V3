@@ -50,11 +50,12 @@ class FloatingReservationStationImpl(outer:FloatingReservationStation, param:RsP
   private val issue = outer.issueNode.out.head._1 zip outer.issueNode.out.head._2._2
   private val wbIn = outer.wakeupNode.in.head
   private val wakeup = wbIn._1.zip(wbIn._2._1)
-  issue.foreach(elm => elm._2.exuConfigs.foreach(elm0 => require(ExuType.fpTypes.contains(elm0.exuType))))
+  // issue.foreach(elm => elm._2.exuConfigs.foreach(elm0 => require(ExuType.fpTypes.contains(elm0.exuType))))
 
   private val fmacIssue = issue.filter(_._2.hasFmac)
   private val fdivIssue = issue.filter(_._2.hasFdiv)
   private val fmiscIssue = issue.filter(_._2.hasFmisc)
+  private val stdIssue = issue.filter(_._2.hasStd)
 
   require(fmacIssue.nonEmpty && fmacIssue.length <= param.bankNum && (param.bankNum % fmacIssue.length) == 0)
   require(fdivIssue.nonEmpty && fdivIssue.length <= param.bankNum && (param.bankNum % fdivIssue.length) == 0)
@@ -116,15 +117,22 @@ class FloatingReservationStationImpl(outer:FloatingReservationStation, param:RsP
   private val fmaIssuePortNum = issue.count(_._2.hasFmac)
   private val fdivIssuePortNum = issue.count(_._2.hasFdiv)
   private val fmiscIssuePortNum = issue.count(_._2.hasFmisc)
+  private val stdIssuePortNum = issue.count(_._2.hasStd)
+
   private val fmaExuCfg = fmacIssue.flatMap(_._2.exuConfigs).filter(_.exuType == ExuType.fmac).head
   private val fdivExuCfg = fdivIssue.flatMap(_._2.exuConfigs).filter(_.exuType == ExuType.fdiv).head
   private val fmiscExuCfg = fmiscIssue.flatMap(_._2.exuConfigs).filter(_.exuType == ExuType.fmisc).head
+  private val stdExuCfg = stdIssue.flatMap(_._2.exuConfigs).filter(_.exuType == ExuType.stdf).head
 
   private val fmacSelectNetwork = Module(new SelectNetwork(param.bankNum, entriesNumPerBank, fmaIssuePortNum, fmaExuCfg, true, true, false, Some(s"FpFmacSelNetwork")))
   private val fdivSelectNetwork = Module(new SelectNetwork(param.bankNum, entriesNumPerBank, fdivIssuePortNum, fdivExuCfg, false, true, false, Some(s"FpFdivSelNetwork")))
   private val fmiscSelectNetwork = Module(new SelectNetwork(param.bankNum, entriesNumPerBank, fmiscIssuePortNum, fmiscExuCfg, false, true, false, Some(s"FpFmiscSelNetwork")))
+  private val stdSelectNetwork = Module(new SelectNetwork(param.bankNum, entriesNumPerBank, stdIssuePortNum, stdExuCfg, true, false, false, Some(s"FpStdSelNetwork")))
+
   fdivSelectNetwork.io.tokenRelease.get.zip(wakeup.filter(_._2.exuType == ExuType.fdiv).map(_._1)).foreach({ case(sink, source) => sink := source })
-  private val selectNetworkSeq = Seq(fmacSelectNetwork, fdivSelectNetwork, fmiscSelectNetwork)
+  
+  private val selectNetworkSeq = Seq(fmacSelectNetwork, fdivSelectNetwork, fmiscSelectNetwork, stdSelectNetwork)
+
   selectNetworkSeq.foreach(sn => {
     sn.io.selectInfo.zip(rsBankSeq).foreach({ case (sink, source) =>
       sink := source.io.selectInfo
@@ -148,9 +156,9 @@ class FloatingReservationStationImpl(outer:FloatingReservationStation, param:RsP
     sink.bits.srcState(2) := Mux(source.bits.ctrl.srcType(2) === SrcType.fp, rport2.resp, SrcState.rdy)
     source.ready := sink.ready
     busyTableReadIdx = busyTableReadIdx + 3
-    when(source.valid){
-      assert(FuType.floatingTypes.map(_ === source.bits.ctrl.fuType).reduce(_||_))
-    }
+    // when(source.valid){
+    //   assert(FuType.floatingTypes.map(_ === source.bits.ctrl.fuType).reduce(_||_))
+    // }
   })
 
   private val timer = GTimer()
@@ -166,7 +174,9 @@ class FloatingReservationStationImpl(outer:FloatingReservationStation, param:RsP
   private var fmaPortIdx = 0
   private var fdivPortIdx = 0
   private var fmiscPortIdx = 0
+  private var stdPortIdx = 0
   private var fmaWkpIdx = 0
+
   println("\nFloating Point Reservation Issue Ports Config:")
   for((iss, issuePortIdx) <- issue.zipWithIndex) {
     println(s"Issue Port $issuePortIdx ${iss._2}")
@@ -187,6 +197,15 @@ class FloatingReservationStationImpl(outer:FloatingReservationStation, param:RsP
         val selectRespArbiter = Module(new SelectRespArbiter(param.bankNum, entriesNumPerBank, 2, false))
         selectRespArbiter.io.in(1) <> fmacSelectNetwork.io.issueInfo(fmaPortIdx - 1)
         selectRespArbiter.io.in(0) <> fdivSelectNetwork.io.issueInfo(fdivPortIdx - 1)
+        XSPerfAccumulate(s"iss_${issuePortIdx}_${iss._2.name}_conflict", Cat(selectRespArbiter.io.in.map(_.valid)).andR)
+        XSPerfAccumulate(s"iss_${issuePortIdx}_${iss._2.name}_issue", selectRespArbiter.io.out.fire)
+        selectRespArbiter.io.out
+      } else if(iss._2.hasStd) {
+        fmaPortIdx = fmaPortIdx + 1
+        stdPortIdx = stdPortIdx + 1
+        val selectRespArbiter = Module(new SelectRespArbiter(param.bankNum, entriesNumPerBank, 2, false))
+        selectRespArbiter.io.in(1) <> fmacSelectNetwork.io.issueInfo(fmaPortIdx - 1)
+        selectRespArbiter.io.in(0) <> stdSelectNetwork.io.issueInfo(stdPortIdx - 1)
         XSPerfAccumulate(s"iss_${issuePortIdx}_${iss._2.name}_conflict", Cat(selectRespArbiter.io.in.map(_.valid)).andR)
         XSPerfAccumulate(s"iss_${issuePortIdx}_${iss._2.name}_issue", selectRespArbiter.io.out.fire)
         selectRespArbiter.io.out
