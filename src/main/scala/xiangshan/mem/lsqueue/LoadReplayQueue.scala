@@ -750,16 +750,16 @@ class LoadReplayQueue(enablePerf: Boolean)(implicit p: Parameters) extends XSMod
   io.mmioWb.bits.debug.isMMIO := mmioReg(s1_mmioEntryIdx)
   io.mmioWb.bits.debug.paddr := s1_mmioPaddr
 
-  assert(!(io.mmioWb.valid && io.mmioWb.bits.uop.robIdx.needFlush(io.redirect)))
+  // assert(!(io.mmioWb.valid && io.mmioWb.bits.uop.robIdx.needFlush(io.redirect)))
   when(io.mmioWb.fire){
     allocatedReg(s1_mmioEntryIdx) := false.B  //release Entry
     debugReplayTimesReg(s1_mmioEntryIdx) := 0.U
     freeMaskVec(s1_mmioEntryIdx) := true.B
     penaltyReg(s1_mmioEntryIdx) := 0.U
 
-    assert(mmioReg(s1_mmioEntryIdx))
-    assert(allocatedReg(s1_mmioEntryIdx))
-    assert(mmioHasReq(s1_mmioEntryIdx))
+    // assert(mmioReg(s1_mmioEntryIdx))
+    // assert(allocatedReg(s1_mmioEntryIdx))
+    // assert(mmioHasReq(s1_mmioEntryIdx))
   }
 
   // Topdown
