@@ -352,7 +352,7 @@ class MemBlockImp(outer: MemBlock) extends BasicExuBlockImp(outer)
     case _ =>
       val l1Prefetcher = Module(new L1Prefetcher())
       // l1Prefetcher.io.enable := Constantin.createRecord(s"enableL1StreamPrefetcher$hartId", initValue = true.B) 
-      l1Prefetcher.io.enable := true.B
+      l1Prefetcher.io.enable := false.B
       l1Prefetcher.pf_ctrl.dynamic_depth := 32.U
       l1Prefetcher.pf_ctrl.flush := false.B
       l1Prefetcher.pf_ctrl.enable := true.B
